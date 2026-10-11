@@ -1,0 +1,18 @@
+
+version: 2
+updates:
+  - package-ecosystem: "pip" # See documentation for possible values
+    directory: "/" # Location of package manifests
+    schedule:
+      interval: "weekly"
+    commit-message:
+      prefix: "[pip] "
+      prefix-development: "[pip dev] "
+      include: "scope"
+  - package-ecosystem: "docker"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    commit-message:
+      # Prefix all commit messages with "[docker] " (no colon, but a trailing whitespace)
+      prefix: "[docker] "

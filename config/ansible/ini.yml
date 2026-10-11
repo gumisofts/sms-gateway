@@ -1,0 +1,6 @@
+myhosts:
+  hosts:
+    main:
+      ansible_host: 45.86.155.161
+  vars:
+    ansible_user: root

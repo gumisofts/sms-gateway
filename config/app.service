@@ -1,0 +1,21 @@
+[Unit]
+Description=gunicorn daemon
+Requires=gunicorn.socket
+After=network.target
+
+[Service]
+Type=notify
+
+User=ubuntu
+Group=www-data
+
+RuntimeDirectory=app
+WorkingDirectory=/home/ubuntu/app
+ExecStart=/home/ubuntu/app/env/bin/gunicorn core.asgi:app -k uvicorn_worker.UvicornWorker -b unix:/home/ubuntu/app/gunicorn/app.sock
+ExecReload=/bin/kill -s HUP $MAINPID
+KillMode=mixed
+TimeoutStopSec=5
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target

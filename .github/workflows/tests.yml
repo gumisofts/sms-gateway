@@ -1,0 +1,64 @@
+name: Django Tests
+
+on:
+  push:
+    branches: ["main", "v01"]
+  pull_request:
+    branches: ["main", "v01"]
+
+env:
+  SECRET_KEY: y)tb02r69qx3&qpw(!tgp800x)3l(q+(!fm$yv%gxwy0o_npd7
+  PG_DB_NAME: temp_db
+  PG_PASSWORD: temp_password
+  PG_HOST: localhost
+  PG_PORT: 5432
+  PG_USER: temp_user
+  REDIS_HOST: localhost
+  REDIS_PORT: 6379
+  EMAIL_HOST: temp
+  EMAIL_HOST_USER: temp@gumisofts.com
+  EMAIL_PORT: 123
+  DJANGO_DEBUG: True
+  DJANGO_POSTGRES_URL: postgresql://temp_user:temp_password@localhost/temp_db
+
+  AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+  AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+  AWS_STORAGE_BUCKET_NAME: ${{ secrets.AWS_STORAGE_BUCKET_NAME }}
+
+jobs:
+  test:
+    name: Run Django Tests
+    runs-on: ubuntu-latest
+    services:
+      pg:
+        image: postgres:alpine
+        ports:
+          - 5432:5432
+        volumes:
+          - pg_data:/var/lib/postgresql/data
+        env:
+          POSTGRES_PASSWORD: ${{ env.PG_PASSWORD }}
+          POSTGRES_USER: ${{ env.PG_USER }}
+          POSTGRES_DB: ${{ env.PG_DB_NAME }}
+      redis:
+        image: redis:alpine
+        ports:
+          - 6379:6379
+        options: --health-cmd="redis-cli ping" --health-interval=10s --health-timeout=5s --health-retries=3
+    strategy:
+      matrix:
+        python-version: ["3.10", "3.11", "3.12"]
+
+    steps:
+      - uses: actions/checkout@v3
+      - name: Set up Python ${{ matrix.python-version }}
+        uses: actions/setup-python@v3
+        with:
+          python-version: ${{ matrix.python-version }}
+      - name: Install Dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install poetry
+          poetry install
+      - name: Run Tests
+        run: poetry run python manage.py test
