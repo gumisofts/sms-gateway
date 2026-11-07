@@ -16,6 +16,7 @@ services:
   app:
     build:
       context: .
+    image: sms-gateway
     entrypoint: sh entrypoint-app.sh
     depends_on:
       - pg
@@ -28,6 +29,27 @@ services:
       - config/app.env
     ports:
       - 8880:8000
+  # Celery worker and beat share the app image (no migrate/collectstatic here).
+  worker:
+    image: sms-gateway
+    entrypoint: []
+    command: celery -A core worker -l info
+    depends_on:
+      - app
+    volumes:
+      - .:/app
+    env_file:
+      - config/app.env
+  beat:
+    image: sms-gateway
+    entrypoint: []
+    command: celery -A core beat -l info
+    depends_on:
+      - app
+    volumes:
+      - .:/app
+    env_file:
+      - config/app.env
 volumes:
   medias:
   static:

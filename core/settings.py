@@ -1,8 +1,9 @@
 import os
+import sys
 from datetime import timedelta
 from pathlib import Path
 from typing import Any
-from urllib.parse import parse_qsl, urlparse
+from urllib.parse import parse_qsl, unquote, urlparse
 
 from django.core.management.utils import get_random_secret_key
 from dotenv import load_dotenv
@@ -11,6 +12,8 @@ load_dotenv(override=True)
 
 BASE_DIR = Path(__file__).resolve().parent.parent
 
+TESTING = "test" in sys.argv[1:2]
+
 SECRET_KEY = os.getenv("DJANGO_SECRET_KEY", get_random_secret_key())
 
 DEBUG = os.getenv("DJANGO_DEBUG", False) == "True"
@@ -18,6 +21,20 @@ DEBUG = os.getenv("DJANGO_DEBUG", False) == "True"
 ALLOWED_HOSTS = [
     "localhost",
     *os.getenv("DJANGO_ALLOWED_HOSTS", "").split(","),
+]
+
+
+# Behind a TLS-terminating reverse proxy (nginx on the Gisila panel): trust its
+# X-Forwarded-Proto so request.is_secure() and the admin's CSRF origin check work.
+if os.getenv("DJANGO_BEHIND_PROXY", "False") == "True":
+    SECURE_PROXY_SSL_HEADER = ("HTTP_X_FORWARDED_PROTO", "https")
+    USE_X_FORWARDED_HOST = True
+
+# e.g. "https://sms.example.com" (needed for the admin / browsable API over https).
+CSRF_TRUSTED_ORIGINS = [
+    origin
+    for origin in os.getenv("DJANGO_CSRF_TRUSTED_ORIGINS", "").split(",")
+    if origin
 ]
 
 
@@ -43,6 +60,8 @@ DEFAULT_APPS = [
 
 THIRD_PARTY_APPS = [
     "rest_framework",
+    "django_filters",
+    "channels",
     "drf_spectacular",
     "drf_spectacular_sidecar",
     "corsheaders",
@@ -50,6 +69,8 @@ THIRD_PARTY_APPS = [
 
 LOCAL_APPS = [
     "auth",
+    "nodes",
+    "messaging",
 ]
 
 INSTALLED_APPS = DEFAULT_APPS + THIRD_PARTY_APPS + LOCAL_APPS
@@ -59,6 +80,7 @@ X_FRAME_OPTIONS = "SAMEORIGIN"
 
 MIDDLEWARE = [
     "django.middleware.security.SecurityMiddleware",
+    "whitenoise.middleware.WhiteNoiseMiddleware",
     "django.contrib.sessions.middleware.SessionMiddleware",
     "django.middleware.common.CommonMiddleware",
     "django.middleware.csrf.CsrfViewMiddleware",
@@ -88,29 +110,47 @@ TEMPLATES = [
 WSGI_APPLICATION = "core.wsgi.app"
 ASGI_APPLICATION = "core.asgi.app"
 
-postgres_url = os.getenv(
-    "DJANGO_POSTGRES_URL", "postgres://postgres:developer@123@localhost:5432/dev"
-)
+# Postgres when DJANGO_POSTGRES_URL is set, SQLite otherwise.
+postgres_url = os.getenv("DJANGO_POSTGRES_URL")
 
+if postgres_url:
+    _pg = urlparse(postgres_url)
+    DATABASES = {
+        "default": {
+            "ENGINE": "django.db.backends.postgresql",
+            "NAME": _pg.path[1:],
+            "USER": unquote(_pg.username or ""),
+            "PASSWORD": unquote(_pg.password or ""),
+            "HOST": _pg.hostname,
+            "PORT": _pg.port,
+            "OPTIONS": dict[str, Any](parse_qsl(_pg.query)),
+            "DISABLE_SERVER_SIDE_CURSORS": True,
+        },
+    }
+else:
+    DATABASES = {
+        "default": {
+            "ENGINE": "django.db.backends.sqlite3",
+            "NAME": BASE_DIR / "db.sqlite3",
+        },
+    }
 
-postgres_url = urlparse(postgres_url)
+# Channel layer. Node WebSockets and the REST/Celery processes only see each
+# other through the layer, so any multi-process deployment needs Redis.
+# The in-memory layer is process-local (single process dev and tests only).
+REDIS_URL = os.getenv("DJANGO_REDIS_URL")
 
-DATABASES = {
-    "default": {  # Change this on to default on production
-        "ENGINE": "django.db.backends.postgresql_psycopg2",
-        "NAME": postgres_url.path[1:],
-        "USER": postgres_url.username,
-        "PASSWORD": postgres_url.password,
-        "HOST": postgres_url.hostname,
-        "PORT": postgres_url.port,
-        "OPTIONS": dict[str, Any](parse_qsl(postgres_url.query)),
-        "DISABLE_SERVER_SIDE_CURSORS": True,
-    },
-    "default": {
-        "ENGINE": "django.db.backends.sqlite3",
-        "NAME": BASE_DIR / "db.sqlite3",
-    },
-}
+if REDIS_URL and not TESTING:
+    CHANNEL_LAYERS = {
+        "default": {
+            "BACKEND": "channels_redis.core.RedisChannelLayer",
+            "CONFIG": {"hosts": [REDIS_URL]},
+        },
+    }
+else:
+    CHANNEL_LAYERS = {
+        "default": {"BACKEND": "channels.layers.InMemoryChannelLayer"},
+    }
 
 
 AUTH_PASSWORD_VALIDATORS = [
@@ -166,6 +206,7 @@ REST_FRAMEWORK = {
         "rest_framework.authentication.BasicAuthentication",
         "rest_framework.authentication.SessionAuthentication",
         "rest_framework_simplejwt.authentication.JWTAuthentication",
+        "messaging.authentication.ApiKeyAuthentication",
     ],
     "DEFAULT_PERMISSION_CLASSES": [],
     "DEFAULT_SCHEMA_CLASS": "drf_spectacular.openapi.AutoSchema",
@@ -180,8 +221,58 @@ EMAIL_HOST_PASSWORD = os.getenv("DJANGO_EMAIL_HOST_PASSWORD")
 
 ADMIN = ("Murad", "nuradhussen082@gmail.com")
 
-CELERY_BROKER_URL = os.getenv("CELERY_BROKER_URL")
-CELERY_BACKEND_URL = os.getenv("CELERY_BACKEND_URL")
+# Celery (see core/celery.py). Broker falls back to the Redis URL.
+CELERY_BROKER_URL = (
+    os.getenv("DJANGO_CELERY_BROKER_URL")
+    or os.getenv("CELERY_BROKER_URL")
+    or REDIS_URL
+    or "memory://"
+)
+CELERY_RESULT_BACKEND = (
+    os.getenv("DJANGO_CELERY_RESULT_BACKEND") or os.getenv("CELERY_BACKEND_URL") or None
+)
+CELERY_TASK_ALWAYS_EAGER = TESTING
+CELERY_TASK_EAGER_PROPAGATES = True
+CELERY_TIMEZONE = TIME_ZONE
+CELERY_BEAT_SCHEDULE = {
+    "dispatch-pending-messages": {
+        "task": "messaging.tasks.dispatch_pending_messages",
+        "schedule": 10.0,
+    },
+    "redispatch-unacked-messages": {
+        "task": "messaging.tasks.redispatch_unacked_messages",
+        "schedule": 30.0,
+    },
+    "expire-pending-messages": {
+        "task": "messaging.tasks.expire_pending_messages",
+        "schedule": 60.0,
+    },
+    "mark-stale-nodes-offline": {
+        "task": "nodes.tasks.mark_stale_nodes_offline",
+        "schedule": 30.0,
+    },
+}
+
+# SMS gateway tuning.
+# Shared secret nodes must present when registering. If unset, registration is
+# only allowed when DJANGO_DEBUG=True.
+NODE_REGISTRATION_KEY = os.getenv("DJANGO_NODE_REGISTRATION_KEY", "")
+# Heartbeat interval pushed to nodes in the `config` message on connect.
+NODE_HEARTBEAT_INTERVAL_SEC = int(os.getenv("DJANGO_NODE_HEARTBEAT_INTERVAL_SEC", 30))
+# A connected node with no heartbeat for this long (or 3x its configured
+# interval, whichever is larger) is marked offline by the beat task.
+NODE_OFFLINE_AFTER_SEC = int(os.getenv("DJANGO_NODE_OFFLINE_AFTER_SEC", 120))
+# Dispatched but never acked after this long: resend / re-dispatch.
+MESSAGE_ACK_TIMEOUT_SEC = int(os.getenv("DJANGO_MESSAGE_ACK_TIMEOUT_SEC", 60))
+# Pending (no node available) for longer than this: expired.
+MESSAGE_PENDING_TTL_SEC = int(os.getenv("DJANGO_MESSAGE_PENDING_TTL_SEC", 3600))
+# Give up (failed) after this many dispatch attempts.
+MESSAGE_MAX_DISPATCH_ATTEMPTS = int(
+    os.getenv("DJANGO_MESSAGE_MAX_DISPATCH_ATTEMPTS", 5)
+)
+MESSAGE_BULK_MAX = int(os.getenv("DJANGO_MESSAGE_BULK_MAX", 500))
+# If set, status webhooks carry an X-Signature: sha256=<hmac of body>.
+WEBHOOK_SECRET = os.getenv("DJANGO_WEBHOOK_SECRET", "")
 
 
 SIMPLE_JWT = {
@@ -201,9 +292,13 @@ SIMPLE_JWT = {
 
 
 SPECTACULAR_SETTINGS = {
-    "TITLE": "API Documentation",
-    "DESCRIPTION": "Description of documentation",
-    "VERSION": "0.0.1",
+    "TITLE": "SMS Gateway API",
+    "DESCRIPTION": (
+        "Send SMS through a fleet of Android gateway nodes. Clients call the REST "
+        "API (JWT bearer or X-API-Key); the backend dispatches jobs to nodes over "
+        "WebSocket (/ws/nodes/{nodeId}, see docs/PROTOCOL.md)."
+    ),
+    "VERSION": "0.1.0",
     "SERVE_INCLUDE_SCHEMA": True,
     # OTHER SETTINGS
     "SWAGGER_UI_DIST": "SIDECAR",  # shorthand to use the sidecar instead
