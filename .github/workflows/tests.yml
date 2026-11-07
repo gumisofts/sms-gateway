@@ -3,8 +3,10 @@ name: Django Tests
 on:
   push:
     branches: ["main", "v01"]
+    paths: ["backend/**", ".github/workflows/tests.yml"]
   pull_request:
     branches: ["main", "v01"]
+    paths: ["backend/**", ".github/workflows/tests.yml"]
 
 env:
   SECRET_KEY: y)tb02r69qx3&qpw(!tgp800x)3l(q+(!fm$yv%gxwy0o_npd7
@@ -24,6 +26,10 @@ env:
   AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
   AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
   AWS_STORAGE_BUCKET_NAME: ${{ secrets.AWS_STORAGE_BUCKET_NAME }}
+
+defaults:
+  run:
+    working-directory: backend
 
 jobs:
   test:

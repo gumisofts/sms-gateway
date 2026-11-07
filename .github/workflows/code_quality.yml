@@ -3,8 +3,14 @@ name: Code Quality Check
 on:
   push:
     branches: ["main", "v01"]
+    paths: ["backend/**", ".github/workflows/code_quality.yml"]
   pull_request:
     branches: ["main", "v01"]
+    paths: ["backend/**", ".github/workflows/code_quality.yml"]
+
+defaults:
+  run:
+    working-directory: backend
 
 jobs:
   code-check:
