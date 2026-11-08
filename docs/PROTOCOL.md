@@ -61,6 +61,8 @@ are ignored by the node, so the protocol can be extended compatibly.
   and not queued twice.
 * `simSlot` / `subscriptionId` optional; `subscriptionId` wins. Omit both for the system default SIM.
   If the requested SIM is not active the message fails with `SIM_UNAVAILABLE`.
+* The backend picks the SIM lane, so when the node reported SIMs it now always sets `subscriptionId`
+  (and `simSlot`) on `send_sms`. The node's rate limiter is keyed by the resolved subscription id.
 
 `config`: runtime tuning (any field optional).
 
@@ -68,7 +70,10 @@ are ignored by the node, so the protocol can be extended compatibly.
 { "type": "config", "ratePerMinute": 30, "heartbeatIntervalSec": 20 }
 ```
 
-`ratePerMinute` is persisted on the node (0 = unlimited). `heartbeatIntervalSec` is clamped to 5..600
+`ratePerMinute` is persisted on the node (0 = unlimited) and means **SMS parts per minute per SIM**
+(a long or Unicode/Amharic message is several parts; carriers count parts). The node keeps an
+independent sliding window per SIM; a message with more parts than the limit is sent once that SIM's
+window is empty. `heartbeatIntervalSec` is clamped to 5..600
 and lasts for the process lifetime.
 
 ### Node -> server
@@ -88,8 +93,11 @@ re-dispatch elsewhere.
 
 ```json
 { "type": "status_update", "id": "job-42", "status": "failed", "attempts": 5,
-  "errorCode": 4, "errorMessage": "NO_SERVICE", "timestamp": 1760000000000 }
+  "errorCode": 4, "errorMessage": "NO_SERVICE", "timestamp": 1760000000000, "parts": 3 }
 ```
+
+`parts` (optional int) is the number of SMS parts the message was split into; omitted until the
+node has planned the send.
 
 `status` is one of `queued` (re-queued for retry), `sending`, `sent` (handed to the network),
 `failed`, `delivered` (carrier delivery report). Delivery is **at-least-once**: updates are
@@ -107,8 +115,14 @@ happen while offline (e.g. you may see `sent` straight after `queued`). The back
 ```json
 { "type": "heartbeat", "batteryPercent": 81, "charging": false, "signalLevel": 3,
   "sims": [{ "slot": 0, "subscriptionId": 3, "carrier": "Vodafone" }],
-  "queueDepth": 2, "ratePerMinute": 20, "timestamp": 1760000000000 }
+  "queueDepth": 2, "ratePerMinute": 20, "timestamp": 1760000000000,
+  "smsLimit": { "raised": true, "maxCount": 100000, "intervalMs": 60000 } }
 ```
+
+`smsLimit` (optional object, always sent by current nodes) describes Android's per-app outgoing SMS
+limit (`sms_outgoing_check_max_count` / `_interval_ms`; default ~30 per 30 min). `raised` is `true`
+when raised, `false` when still at the default, absent when unknown; `maxCount` / `intervalMs` are
+absent when unreadable or unset. When not raised, sends fail with errorCode 5 (limit exceeded).
 
 `signalLevel` is 0..4 or omitted. `queueDepth` counts locally queued + sending messages; use it for
 load balancing across nodes.

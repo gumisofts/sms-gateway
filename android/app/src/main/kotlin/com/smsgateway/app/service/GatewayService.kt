@@ -55,6 +55,7 @@ class GatewayService : Service() {
 
         val s = CoroutineScope(SupervisorJob() + Dispatchers.Default)
         scope = s
+        s.launch { container.smsLimit.apply() } // no-op unless WRITE_SECURE_SETTINGS was granted via adb
         val client = container.newGatewayClient()
         this.client = client
         s.launch { client.run() }

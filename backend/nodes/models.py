@@ -55,6 +55,10 @@ class Node(models.Model):
     queue_depth = models.PositiveIntegerField(default=0)
     rate_per_minute = models.PositiveIntegerField(default=0, help_text="0 = unlimited")
     last_heartbeat_at = models.DateTimeField(null=True, blank=True)
+    # Android's own per-app SMS limit (SmsUsageMonitor, ~30 per 30 min by
+    # default). None: the phone could not tell (older app or unreadable).
+    sms_limit_raised = models.BooleanField(null=True, blank=True)
+    sms_limit_max_count = models.PositiveIntegerField(null=True, blank=True)
 
     # Config pushed by an admin (sent on every connect and when changed).
     desired_rate_per_minute = models.PositiveIntegerField(null=True, blank=True)
@@ -76,19 +80,76 @@ class Node(models.Model):
 
 
 class NodeSim(models.Model):
+    """One SIM of a node: a sending lane with its own pace, daily cap and health.
+
+    Rows are kept when a SIM disappears from a heartbeat (``is_present=False``)
+    so admin settings and pause state survive a temporary SIM/radio glitch.
+    Usage (parts per minute / per day) is counted from ``SmsMessage`` rows.
+    """
+
     node = models.ForeignKey(Node, on_delete=models.CASCADE, related_name="sims")
     slot = models.IntegerField()
     subscription_id = models.IntegerField(null=True, blank=True)
     carrier = models.CharField(max_length=255, blank=True)
+    label = models.CharField(
+        max_length=64, blank=True, help_text="Optional name, e.g. the SIM's number."
+    )
+
+    is_present = models.BooleanField(
+        default=True, help_text="Reported by the phone in its last update."
+    )
+    is_enabled = models.BooleanField(
+        default=True, help_text="Disabled SIMs never get messages."
+    )
+    rate_per_minute = models.PositiveIntegerField(
+        null=True,
+        blank=True,
+        help_text="SMS parts per minute. Empty: server default. 0: unlimited.",
+    )
+    daily_limit = models.PositiveIntegerField(
+        null=True,
+        blank=True,
+        help_text="SMS parts per day. Empty: server default. 0: unlimited.",
+    )
+
+    # Health: consecutive failures auto-pause the SIM (likely carrier block).
+    consecutive_failures = models.PositiveIntegerField(default=0)
+    paused_until = models.DateTimeField(null=True, blank=True)
+    pause_reason = models.CharField(max_length=255, blank=True)
+    last_success_at = models.DateTimeField(null=True, blank=True)
+    last_failure_at = models.DateTimeField(null=True, blank=True)
+    last_error = models.CharField(max_length=255, blank=True)
 
     class Meta:
-        ordering = ["slot"]
+        ordering = ["node_id", "slot"]
+        verbose_name = "SIM"
+        verbose_name_plural = "SIMs"
         constraints = [
             models.UniqueConstraint(fields=["node", "slot"], name="uniq_node_sim_slot")
         ]
 
     def __str__(self):
-        return f"{self.node.node_id} slot {self.slot}"
+        name = self.label or self.carrier or "SIM"
+        return (
+            f"{self.node.device_name or self.node.node_id} / {name} (slot {self.slot})"
+        )
+
+    @property
+    def effective_rate_per_minute(self) -> int:
+        if self.rate_per_minute is not None:
+            return self.rate_per_minute
+        return settings.SIM_DEFAULT_RATE_PER_MINUTE
+
+    @property
+    def effective_daily_limit(self) -> int:
+        if self.daily_limit is not None:
+            return self.daily_limit
+        return settings.SIM_DEFAULT_DAILY_LIMIT
+
+    def is_paused(self, now=None) -> bool:
+        return self.paused_until is not None and self.paused_until > (
+            now or timezone.now()
+        )
 
 
 class NodeToken(models.Model):

@@ -32,6 +32,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.Lifecycle
@@ -61,7 +62,7 @@ fun HomeScreen(viewModel: HomeViewModel) {
         lifecycleOwner.lifecycle.addObserver(obs)
         onDispose { lifecycleOwner.lifecycle.removeObserver(obs) }
     }
-    LaunchedEffect(refresh) { viewModel.refreshSims() }
+    LaunchedEffect(refresh) { viewModel.refreshSims(); viewModel.refreshSmsLimit() }
 
     val permissionLauncher = rememberLauncherForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) { refresh++ }
     val batteryLauncher = rememberLauncherForActivityResult(ActivityResultContracts.StartActivityForResult()) { refresh++ }
@@ -127,6 +128,7 @@ fun HomeScreen(viewModel: HomeViewModel) {
             }
         }
 
+        item { SmsLimitCard(state.smsLimit.raised == true, viewModel::applySmsLimit) }
         item { SimsCard(state) }
         item { TestSendCard(state, viewModel) }
         item { SettingsCard(state.settings.ratePerMinute, viewModel::setRate) }
@@ -134,6 +136,25 @@ fun HomeScreen(viewModel: HomeViewModel) {
         item { Text("Recent messages (${state.queueDepth} active)", style = MaterialTheme.typography.titleMedium) }
         items(state.messages, key = { it.id }) { MessageRow(it) }
         item { Text("", Modifier.padding(16.dp)) }
+    }
+}
+
+@Composable
+private fun SmsLimitCard(raised: Boolean, onApply: () -> Unit) {
+    Card(Modifier.fillMaxWidth()) {
+        Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            Text("Android SMS limit", style = MaterialTheme.typography.titleMedium)
+            if (raised) {
+                Text("Raised", color = Color(0xFF2E7D32))
+            } else {
+                Text(
+                    "Android limits apps to ~30 SMS / 30 min. Run the provisioning script (docs/DEVICE_SETUP.md) or: " +
+                        "adb shell pm grant com.smsgateway.app android.permission.WRITE_SECURE_SETTINGS",
+                    color = MaterialTheme.colorScheme.error,
+                )
+                OutlinedButton(onClick = onApply) { Text("Re-check / Apply") }
+            }
+        }
     }
 }
 

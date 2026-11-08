@@ -173,9 +173,10 @@ class DispatcherTests(TestCase):
             counts[m.node_id] += 1
         self.assertEqual(counts, {a.pk: 3, b.pk: 3})
 
-    def test_node_at_its_rate_is_skipped(self):
-        limited = make_node(rate_per_minute=2)
-        other = make_node(queue_depth=50)
+    def test_simless_node_at_its_rate_is_skipped(self):
+        # Nodes without SIM info are one lane paced by the node's own rate.
+        limited = make_node(rate_per_minute=2, sims=())
+        other = make_node(queue_depth=50, sims=())
         owner = make_user()
         for _ in range(2):
             make_message(
@@ -562,7 +563,9 @@ class EndToEndTests(WebSocketCase):
                 "id": response.json()["id"],
                 "to": MSG["to"],
                 "body": MSG["body"],
+                # The dispatcher names the SIM lane it picked.
                 "simSlot": 0,
+                "subscriptionId": 3,
             },
         )
 

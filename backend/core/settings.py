@@ -6,6 +6,7 @@ from typing import Any
 from urllib.parse import parse_qsl, unquote, urlparse
 
 from django.core.management.utils import get_random_secret_key
+from django.urls import reverse_lazy
 from dotenv import load_dotenv
 
 load_dotenv(override=True)
@@ -50,6 +51,9 @@ CORS_ALLOWED_ORIGINS = [
 AUTH_USER_MODEL = "accounts.User"
 DEFAULT_APPS = [
     "daphne",
+    # Admin theme; must come before django.contrib.admin.
+    "unfold",
+    "unfold.contrib.filters",
     "django.contrib.admin",
     "django.contrib.auth",
     "django.contrib.contenttypes",
@@ -94,7 +98,7 @@ ROOT_URLCONF = "core.urls"
 TEMPLATES = [
     {
         "BACKEND": "django.template.backends.django.DjangoTemplates",
-        "DIRS": [],
+        "DIRS": [BASE_DIR / "templates"],
         "APP_DIRS": True,
         "OPTIONS": {
             "context_processors": [
@@ -176,7 +180,8 @@ AUTHENTICATION_BACKENDS = [
 
 LANGUAGE_CODE = "en-us"
 
-TIME_ZONE = "UTC"
+# Also the day boundary for per-SIM daily caps.
+TIME_ZONE = os.getenv("DJANGO_TIME_ZONE", "Africa/Addis_Ababa")
 
 USE_I18N = True
 
@@ -188,7 +193,12 @@ STORAGES = {
         "BACKEND": "django.core.files.storage.FileSystemStorage",
     },
     "staticfiles": {
-        "BACKEND": "whitenoise.storage.CompressedManifestStaticFilesStorage",
+        # Tests render admin pages without running collectstatic first.
+        "BACKEND": (
+            "django.contrib.staticfiles.storage.StaticFilesStorage"
+            if TESTING
+            else "whitenoise.storage.CompressedManifestStaticFilesStorage"
+        ),
     },
 }
 
@@ -271,6 +281,15 @@ MESSAGE_MAX_DISPATCH_ATTEMPTS = int(
     os.getenv("DJANGO_MESSAGE_MAX_DISPATCH_ATTEMPTS", 5)
 )
 MESSAGE_BULK_MAX = int(os.getenv("DJANGO_MESSAGE_BULK_MAX", 500))
+
+# Per-SIM sending lanes (a SIM can override these in the admin). Counted in
+# SMS parts, which is what carriers count. 0 = unlimited.
+SIM_DEFAULT_RATE_PER_MINUTE = int(os.getenv("DJANGO_SIM_DEFAULT_RATE_PER_MINUTE", 10))
+SIM_DEFAULT_DAILY_LIMIT = int(os.getenv("DJANGO_SIM_DEFAULT_DAILY_LIMIT", 1000))
+# This many failed messages in a row on one SIM pause it (likely carrier block)
+# for SIM_PAUSE_MINUTES. 0 disables auto-pause.
+SIM_PAUSE_AFTER_FAILURES = int(os.getenv("DJANGO_SIM_PAUSE_AFTER_FAILURES", 5))
+SIM_PAUSE_MINUTES = int(os.getenv("DJANGO_SIM_PAUSE_MINUTES", 60))
 # If set, status webhooks carry an X-Signature: sha256=<hmac of body>.
 WEBHOOK_SECRET = os.getenv("DJANGO_WEBHOOK_SECRET", "")
 
@@ -304,4 +323,91 @@ SPECTACULAR_SETTINGS = {
     "SWAGGER_UI_DIST": "SIDECAR",  # shorthand to use the sidecar instead
     "SWAGGER_UI_FAVICON_HREF": "SIDECAR",
     "REDOC_DIST": "SIDECAR",
+}
+
+
+# ----------------------------------------------------------------- admin UI
+# django-unfold theme; the dashboard is built in core/dashboard.py.
+UNFOLD = {
+    "SITE_TITLE": "SMS Gateway",
+    "SITE_HEADER": "SMS Gateway",
+    "SITE_SUBHEADER": "Android node fleet",
+    "SITE_SYMBOL": "sms",
+    "SITE_URL": "/",
+    "SHOW_HISTORY": True,
+    "SHOW_VIEW_ON_SITE": False,
+    "ENVIRONMENT": "core.dashboard.environment_callback",
+    "DASHBOARD_CALLBACK": "core.dashboard.dashboard_callback",
+    "COLORS": {
+        "primary": {
+            "50": "oklch(97.7% .013 236.62)",
+            "100": "oklch(95.1% .026 236.824)",
+            "200": "oklch(90.1% .058 230.902)",
+            "300": "oklch(82.8% .111 230.318)",
+            "400": "oklch(74.6% .16 232.661)",
+            "500": "oklch(68.5% .169 237.323)",
+            "600": "oklch(58.8% .158 241.966)",
+            "700": "oklch(50% .134 242.749)",
+            "800": "oklch(44.3% .11 240.79)",
+            "900": "oklch(39.1% .09 240.876)",
+            "950": "oklch(29.3% .066 243.157)",
+        },
+    },
+    "SIDEBAR": {
+        "show_search": True,
+        "show_all_applications": False,
+        "navigation": [
+            {
+                "title": "Gateway",
+                "items": [
+                    {
+                        "title": "Dashboard",
+                        "icon": "dashboard",
+                        "link": reverse_lazy("admin:index"),
+                    },
+                    {
+                        "title": "Messages",
+                        "icon": "sms",
+                        "link": reverse_lazy("admin:messaging_smsmessage_changelist"),
+                    },
+                    {
+                        "title": "Phones (nodes)",
+                        "icon": "smartphone",
+                        "link": reverse_lazy("admin:nodes_node_changelist"),
+                    },
+                    {
+                        "title": "SIMs",
+                        "icon": "sim_card",
+                        "link": reverse_lazy("admin:nodes_nodesim_changelist"),
+                    },
+                ],
+            },
+            {
+                "title": "Access",
+                "separator": True,
+                "items": [
+                    {
+                        "title": "API keys",
+                        "icon": "key",
+                        "link": reverse_lazy("admin:messaging_apikey_changelist"),
+                    },
+                    {
+                        "title": "Users",
+                        "icon": "person",
+                        "link": reverse_lazy("admin:accounts_user_changelist"),
+                    },
+                    {
+                        "title": "Groups",
+                        "icon": "group",
+                        "link": reverse_lazy("admin:auth_group_changelist"),
+                    },
+                    {
+                        "title": "Node tokens",
+                        "icon": "token",
+                        "link": reverse_lazy("admin:nodes_nodetoken_changelist"),
+                    },
+                ],
+            },
+        ],
+    },
 }

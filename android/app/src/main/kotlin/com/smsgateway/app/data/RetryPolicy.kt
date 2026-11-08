@@ -51,7 +51,7 @@ class RetryPolicy(
             RADIO_OFF -> "RADIO_OFF"
             NULL_PDU -> "NULL_PDU"
             NO_SERVICE -> "NO_SERVICE"
-            LIMIT_EXCEEDED -> "LIMIT_EXCEEDED"
+            LIMIT_EXCEEDED -> "LIMIT_EXCEEDED (Android SMS limit; raise sms_outgoing_check_max_count)"
             6 -> "FDN_CHECK_FAILURE"
             7, 8 -> "SHORT_CODE_NOT_ALLOWED"
             RADIO_NOT_AVAILABLE -> "RADIO_NOT_AVAILABLE"

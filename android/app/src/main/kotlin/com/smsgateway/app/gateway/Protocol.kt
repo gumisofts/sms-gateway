@@ -84,6 +84,8 @@ sealed class NodeMessage {
         val errorCode: Int? = null,
         val errorMessage: String? = null,
         val timestamp: Long,
+        /** SMS parts of the message, when known (omitted before the first send attempt). */
+        val parts: Int? = null,
     ) : NodeMessage()
 
     @Serializable
@@ -97,8 +99,17 @@ sealed class NodeMessage {
         val queueDepth: Int,
         val ratePerMinute: Int,
         val timestamp: Long,
+        val smsLimit: SmsLimitInfo? = null,
     ) : NodeMessage()
 }
+
+/** State of Android's per-app outgoing SMS limit (sms_outgoing_check_*). Null fields = unknown. */
+@Serializable
+data class SmsLimitInfo(
+    val raised: Boolean? = null,
+    val maxCount: Int? = null,
+    val intervalMs: Long? = null,
+)
 
 // ---------------------------------------------------------------- endpoints
 

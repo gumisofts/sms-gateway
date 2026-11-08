@@ -51,7 +51,10 @@ class RegistrationTests(TestCase):
         self.assertEqual(Node.objects.count(), 1)
         self.assertIsNone(NodeToken.authenticate(first["token"]))
         self.assertIsNotNone(NodeToken.authenticate(second["token"]))
-        self.assertEqual([s.slot for s in Node.objects.get().sims.all()], [1])
+        sims = Node.objects.get().sims
+        self.assertEqual([s.slot for s in sims.filter(is_present=True)], [1])
+        # The old slot is kept (settings/pause survive) but marked absent.
+        self.assertEqual([s.slot for s in sims.filter(is_present=False)], [0])
 
     def test_unknown_previous_node_id_creates_a_new_node(self):
         body = self.post(registrationKey="s3cret", previousNodeId="ghost").json()
@@ -254,7 +257,9 @@ class WebSocketAuthTests(WebSocketCase):
         )
         self.assertEqual(row.rate_per_minute, 20)
         sims = await sync_to_async(
-            lambda: [(s.slot, s.subscription_id) for s in row.sims.all()]
+            lambda: [
+                (s.slot, s.subscription_id) for s in row.sims.filter(is_present=True)
+            ]
         )()
         self.assertEqual(sims, [(1, 7)])
 

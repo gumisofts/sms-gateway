@@ -5,6 +5,7 @@ import com.smsgateway.app.gateway.GatewayJson
 import com.smsgateway.app.gateway.NodeMessage
 import com.smsgateway.app.gateway.RegisterRequest
 import com.smsgateway.app.gateway.ServerMessage
+import com.smsgateway.app.gateway.SmsLimitInfo
 import com.smsgateway.app.sms.SimInfo
 import kotlinx.serialization.SerializationException
 import org.junit.Assert.assertEquals
@@ -35,6 +36,8 @@ class ProtocolTest {
             NodeMessage.Ack("j2", false, "queue_full"),
             NodeMessage.StatusUpdate("j1", "failed", 3, 4, "NO_SERVICE", 123L),
             NodeMessage.Heartbeat(80, true, 3, listOf(SimInfo(0, 5, "Carrier")), 2, 20, 99L),
+            NodeMessage.StatusUpdate("j1", "sent", 1, timestamp = 5L, parts = 3),
+            NodeMessage.Heartbeat(80, true, null, emptyList(), 0, 20, 99L, SmsLimitInfo(true, 100000, 60000L)),
         )
         for (m in msgs) {
             val text = json.encodeToString(NodeMessage.serializer(), m)
@@ -43,6 +46,19 @@ class ProtocolTest {
         val ack = json.encodeToString(NodeMessage.serializer(), NodeMessage.Ack("j1", true))
         assertTrue(ack, ack.contains("\"type\":\"ack\""))
         assertTrue("nulls omitted: $ack", !ack.contains("reason"))
+    }
+
+    @Test
+    fun partsAndSmsLimitAreOptionalOnTheWire() {
+        val su = json.encodeToString(NodeMessage.serializer(), NodeMessage.StatusUpdate("j", "sent", 1, timestamp = 1L))
+        assertTrue(su, !su.contains("parts"))
+        val su2 = json.encodeToString(NodeMessage.serializer(), NodeMessage.StatusUpdate("j", "sent", 1, timestamp = 1L, parts = 2))
+        assertTrue(su2, su2.contains("\"parts\":2"))
+        val hb = json.encodeToString(
+            NodeMessage.serializer(),
+            NodeMessage.Heartbeat(1, false, null, emptyList(), 0, 20, 1L, SmsLimitInfo(raised = true)),
+        )
+        assertTrue(hb, hb.contains("\"smsLimit\":{\"raised\":true}"))
     }
 
     @Test

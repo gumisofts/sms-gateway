@@ -63,6 +63,18 @@ class SmsMessage(models.Model):
         on_delete=models.SET_NULL,
         related_name="messages",
     )
+    sim = models.ForeignKey(
+        "nodes.NodeSim",
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name="messages",
+        help_text="SIM lane the message was dispatched on.",
+    )
+    parts = models.PositiveSmallIntegerField(
+        default=1,
+        help_text="SMS parts: estimated on creation, then as reported by the phone.",
+    )
     # node_ids that rejected or timed out, skipped on re-dispatch.
     tried_nodes = models.JSONField(default=list, blank=True)
     dispatch_attempts = models.PositiveIntegerField(default=0)
@@ -87,6 +99,9 @@ class SmsMessage(models.Model):
                 fields=["status", "created_at"], name="msg_status_created_idx"
             ),
             models.Index(fields=["node", "status"], name="msg_node_status_idx"),
+            models.Index(
+                fields=["sim", "dispatched_at"], name="msg_sim_dispatched_idx"
+            ),
             models.Index(fields=["owner", "-created_at"], name="msg_owner_created_idx"),
             models.Index(
                 fields=["dispatched_at"],

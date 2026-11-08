@@ -33,7 +33,8 @@ def make_user(staff=False, **extra):
 
 def make_node(connected=True, sims=((0, 3),), **fields):
     """A node row without going through registration."""
-    node = Node.objects.create(device_name="Test phone", connected=connected, **fields)
+    fields.setdefault("device_name", "Test phone")
+    node = Node.objects.create(connected=connected, **fields)
     for slot, subscription_id in sims:
         NodeSim.objects.create(
             node=node, slot=slot, subscription_id=subscription_id, carrier="Test"

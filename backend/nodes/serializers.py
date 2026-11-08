@@ -36,7 +36,22 @@ class NodeRegisterResponseSerializer(serializers.Serializer):
 class NodeSimSerializer(serializers.ModelSerializer):
     class Meta:
         model = NodeSim
-        fields = ["slot", "subscription_id", "carrier"]
+        fields = [
+            "id",
+            "slot",
+            "subscription_id",
+            "carrier",
+            "label",
+            "is_present",
+            "is_enabled",
+            "rate_per_minute",
+            "daily_limit",
+            "paused_until",
+            "pause_reason",
+            "consecutive_failures",
+            "last_error",
+        ]
+        read_only_fields = fields
 
 
 class NodeSerializer(serializers.ModelSerializer):
@@ -58,6 +73,8 @@ class NodeSerializer(serializers.ModelSerializer):
             "model",
             "android_version",
             "sdk_int",
+            "sms_limit_raised",
+            "sms_limit_max_count",
             "app_version",
             "is_active",
             "online",

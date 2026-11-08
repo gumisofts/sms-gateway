@@ -16,7 +16,9 @@ yet; a "Send test SMS" form enqueues locally so the full sending path can be exe
  GatewayService (foreground, type remoteMessaging)  --- owns the long-running coroutines
    |-- GatewayClient  (gateway/)   OkHttp WebSocket, reconnect w/ backoff, heartbeat,
    |                               send_sms -> queue, status_update <- queue
-   |-- SmsDispatcher  (sms/)       queue -> RateLimiter -> SmsSender -> SmsManager
+   |-- SmsDispatcher  (sms/)       queue -> plan (SIM, parts) -> RateLimiter (per SIM, parts/min)
+   |                               -> SmsSender -> SmsManager
+   |-- SmsLimitManager (sms/)      raises Android's per-app SMS limit (WRITE_SECURE_SETTINGS)
    '-- (settings -> rate limit)
             ^                                  |
             |                       PendingIntents (sent / delivered)
@@ -70,7 +72,7 @@ status and keeps retrying. **Skip - use offline test mode** goes straight to Hom
   **Change server** (confirm; stops the service, forgets the registration, back to Connect with the URL
   prefilled).
 * The persistent notification mirrors the state (Connected / Reconnecting in Ns / Unauthorized / Off).
-* Below: setup (permissions, battery exemption), SIMs, test SMS, rate limit (messages/minute, default
+* Below: setup (permissions, battery exemption), SIMs, test SMS, Android SMS limit status, rate limit (SMS parts/minute per SIM, default
   20, also pushed by the backend) and recent messages.
 
 **Local development.** Cleartext `http://`/`ws://` works **only in debug builds** (debug network
@@ -84,6 +86,12 @@ backend must listen on that interface (`runserver 0.0.0.0:8000`) and the Django 
 * **Google Play policy**: `SEND_SMS` is a restricted permission; Play only allows it for apps that
   are the default SMS handler. This app is meant to be side-loaded / distributed privately (MDM,
   direct APK). `REQUEST_IGNORE_BATTERY_OPTIMIZATIONS` is also policy-restricted on Play.
+* **Android SMS limit**: Android allows an app only ~30 SMS per 30 min, then prompts or fails with
+  `RESULT_ERROR_LIMIT_EXCEEDED` (5). Provisioning raises `sms_outgoing_check_max_count` /
+  `sms_outgoing_check_interval_ms` (see [docs/DEVICE_SETUP.md](../docs/DEVICE_SETUP.md)); granting
+  `adb shell pm grant com.smsgateway.app android.permission.WRITE_SECURE_SETTINGS` lets the app apply
+  it itself when the service starts. Home shows the current state; it is also in the heartbeat.
+  Not verified on a real device.
 * **Carrier limits**: carriers throttle or block high-volume SIM traffic (and Android itself
   prompts/limits for premium short codes). Keep the rate limit conservative; spread load across nodes.
 * **Android 14+ background rules**: foreground services need a declared type. We use

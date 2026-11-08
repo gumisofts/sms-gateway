@@ -7,6 +7,7 @@ Android phones act as SMS gateway nodes; a backend dispatches outbound SMS jobs 
 | [`backend/`](backend/) | Django backend: REST API, node WebSockets, dispatcher, Celery (see [backend/README.md](backend/README.md)) |
 | [`android/`](android/) | Kotlin Android gateway app (see [android/README.md](android/README.md)) |
 | [`docs/PROTOCOL.md`](docs/PROTOCOL.md) | Node ⇄ backend protocol (REST registration + WebSocket) |
+| [`docs/DEVICE_SETUP.md`](docs/DEVICE_SETUP.md) | Phone provisioning guide (adb scripts in `scripts/`, SMS limit, OEM battery settings, ramp-up) |
 
 ## Quick start
 

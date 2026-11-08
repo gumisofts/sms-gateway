@@ -14,9 +14,10 @@ from django.conf import settings
 from django.db import IntegrityError, transaction
 from django.utils import timezone
 
-from nodes.models import Node
+from nodes.models import Node, NodeSim
 
 from .models import NODE_STATUSES, TERMINAL, SmsMessage, Status
+from .segments import count_parts
 
 logger = logging.getLogger(__name__)
 
@@ -87,6 +88,7 @@ def create_message(owner, data: dict) -> tuple[SmsMessage, bool]:
                 owner=owner,
                 to=data["to"],
                 body=data["body"],
+                parts=count_parts(data["body"]),
                 requested_node=data.get("requested_node"),
                 sim_slot=data.get("sim_slot"),
                 subscription_id=data.get("subscription_id"),
@@ -166,7 +168,9 @@ def unacked_for_node(node: Node) -> list[SmsMessage]:
     return list(
         SmsMessage.objects.filter(
             node=node, status=Status.DISPATCHED, acked_at__isnull=True
-        ).order_by("dispatched_at")
+        )
+        # send_sms_event reads .sim from async code: no lazy queries there.
+        .select_related("sim").order_by("dispatched_at")
     )
 
 
@@ -202,7 +206,8 @@ def handle_ack(node: Node, message_id, accepted: bool, reason=None) -> bool:
     message.tried_nodes = tried
     message.status = Status.PENDING
     message.node = None
-    message.save(update_fields=["tried_nodes", "status", "node", "updated_at"])
+    message.sim = None
+    message.save(update_fields=["tried_nodes", "status", "node", "sim", "updated_at"])
     return True
 
 
@@ -216,6 +221,11 @@ def apply_node_status(node: Node, data: dict) -> bool:
     if message is None or message.node_id != node.pk:
         # Unknown job, or re-assigned to another node since.
         return False
+    parts = data.get("parts")
+    if isinstance(parts, int) and 0 < parts <= 255 and parts != message.parts:
+        # The phone's real count (divideMessage) replaces the estimate.
+        message.parts = parts
+        message.save(update_fields=["parts", "updated_at"])
     changed = message.apply_node_status(
         status,
         data.get("attempts"),
@@ -226,7 +236,60 @@ def apply_node_status(node: Node, data: dict) -> bool:
     if changed:
         message.save()
         notify(message)
+        if message.sim_id and message.status in (
+            Status.SENT,
+            Status.DELIVERED,
+            Status.FAILED,
+        ):
+            record_sim_result(message.sim_id, message)
     return changed
+
+
+def record_sim_result(sim_id: int, message: SmsMessage) -> None:
+    """Track SIM health: consecutive failed messages auto-pause the SIM.
+
+    Only the final outcome of a message counts (the phone already retried
+    transient errors). Any sent/delivered message resets the streak.
+    """
+    sim = NodeSim.objects.select_for_update().filter(pk=sim_id).first()
+    if sim is None:
+        return
+    now = timezone.now()
+    if message.status == Status.FAILED:
+        sim.consecutive_failures += 1
+        sim.last_failure_at = now
+        sim.last_error = (message.error_message or f"error {message.error_code}")[:255]
+        threshold = settings.SIM_PAUSE_AFTER_FAILURES
+        if (
+            threshold
+            and sim.consecutive_failures >= threshold
+            and not sim.is_paused(now)
+        ):
+            sim.paused_until = now + timedelta(minutes=settings.SIM_PAUSE_MINUTES)
+            sim.pause_reason = (
+                f"{sim.consecutive_failures} failed messages in a row; "
+                f"last error: {sim.last_error}"
+            )[:255]
+            logger.warning("SIM %s auto-paused: %s", sim, sim.pause_reason)
+    elif (
+        sim.consecutive_failures
+        or sim.last_success_at is None
+        or (now - sim.last_success_at) > timedelta(seconds=30)
+    ):
+        # Throttled write: at most every 30 s per SIM unless a streak resets.
+        sim.consecutive_failures = 0
+        sim.last_success_at = now
+    else:
+        return
+    sim.save()
+
+
+def resume_sim(sim: NodeSim) -> None:
+    """Clear an (auto-)pause; the streak restarts from zero."""
+    sim.paused_until = None
+    sim.pause_reason = ""
+    sim.consecutive_failures = 0
+    sim.save(update_fields=["paused_until", "pause_reason", "consecutive_failures"])
 
 
 def is_terminal_status(status: str) -> bool:

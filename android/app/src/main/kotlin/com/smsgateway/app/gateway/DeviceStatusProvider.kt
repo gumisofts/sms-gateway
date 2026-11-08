@@ -7,9 +7,14 @@ import android.os.BatteryManager
 import android.os.Build
 import android.telephony.TelephonyManager
 import com.smsgateway.app.sms.SimManager
+import com.smsgateway.app.sms.SmsLimitManager
 
 /** Reads device facts for registration and heartbeats. */
-class DeviceStatusProvider(private val context: Context, private val sims: SimManager) {
+class DeviceStatusProvider(
+    private val context: Context,
+    private val sims: SimManager,
+    private val smsLimit: SmsLimitManager,
+) {
 
     fun appVersion(): String = try {
         context.packageManager.getPackageInfo(context.packageName, 0).versionName ?: "unknown"
@@ -43,6 +48,7 @@ class DeviceStatusProvider(private val context: Context, private val sims: SimMa
             queueDepth = queueDepth,
             ratePerMinute = ratePerMinute,
             timestamp = now,
+            smsLimit = smsLimit.status().let { SmsLimitInfo(it.raised, it.maxCount, it.intervalMs) },
         )
     }
 

@@ -39,12 +39,25 @@ drf-spectacular (Swagger UI at `/`).
 * **Message lifecycle**: `pending -> dispatched -> queued -> sending -> sent -> delivered`,
   or `failed` / `expired` / `cancelled`. Terminal states never change
   (`SmsMessage.apply_node_status` is the single place that decides).
-* **Dispatch**: eligible nodes are active, connected, honour the requested node / SIM
-  (`subscription_id` wins over `sim_slot`) and, if the node has an `owner`, only serve that
-  owner's messages (nodes without an owner are a shared pool). The least loaded wins
-  (`queueDepth` from the last heartbeat plus unacked jobs); nodes that already got
-  `ratePerMinute` jobs in the last minute are skipped. No node available means the message
-  stays `pending` until one connects/heartbeats, the beat task retries, or it expires.
+* **Dispatch (per-SIM lanes)**: eligible nodes are active, connected, honour the requested
+  node / SIM (`subscription_id` wins over `sim_slot`) and, if the node has an `owner`, only
+  serve that owner's messages (nodes without an owner are a shared pool). Every present,
+  enabled, unpaused SIM of those nodes is a lane with its own rate (parts/minute) and daily
+  cap (parts/day, reset at local midnight); the least loaded lane with room wins (node
+  `queueDepth` + unacked jobs, then the SIM's recent and daily usage), so dual-SIM phones use
+  both SIMs. Usage is counted in SMS parts (`messaging/segments.py`, then the count the phone
+  reports). Nodes that report no SIMs are one lane paced by their own `ratePerMinute`.
+  No lane with room means the message stays `pending` until one frees up (next minute, next
+  day, a phone connects), the beat task retries, or it expires.
+* **SIM health**: a message's final failure counts against its SIM; `DJANGO_SIM_PAUSE_AFTER_FAILURES`
+  failures in a row pause the SIM for `DJANGO_SIM_PAUSE_MINUTES` (likely carrier block), any
+  sent/delivered message resets the streak. SIMs missing from a heartbeat are kept as
+  "absent" so their settings survive.
+* **Admin**: django-unfold theme with a dashboard at `/admin/` (today's totals, phones online,
+  capacity left, paused SIMs, phones without the Android SMS limit raised, 24 h chart, per-SIM
+  usage). SIM rate/cap/enabled are editable in the SIM list; actions resume/enable/disable
+  SIMs, disable phones, cancel/retry messages, revoke API keys. API keys can be created in
+  the admin (shown once).
 * **Acks**: `accepted: false` sends the job to a different node (`invalid_job` fails it).
   Jobs not acked within `DJANGO_MESSAGE_ACK_TIMEOUT_SEC` are re-sent to the same node if it is
   still connected (ids are idempotent on the node) or moved to another node if it is offline.
@@ -101,6 +114,11 @@ Formatting: `black`, `isort --profile black`, `flake8` (pre-commit is configured
 | `DJANGO_MESSAGE_PENDING_TTL_SEC` | 3600 | pending this long: `expired` |
 | `DJANGO_MESSAGE_MAX_DISPATCH_ATTEMPTS` | 5 | then the message is `failed` |
 | `DJANGO_MESSAGE_BULK_MAX` | 500 | max messages in `POST /api/messages/bulk/` |
+| `DJANGO_TIME_ZONE` | `Africa/Addis_Ababa` | also the midnight boundary of per-SIM daily caps |
+| `DJANGO_SIM_DEFAULT_RATE_PER_MINUTE` | 10 | SMS parts per minute per SIM (a SIM can override it in the admin; 0 = unlimited) |
+| `DJANGO_SIM_DEFAULT_DAILY_LIMIT` | 1000 | SMS parts per day per SIM (override per SIM; 0 = unlimited) |
+| `DJANGO_SIM_PAUSE_AFTER_FAILURES` | 5 | failed messages in a row that auto-pause a SIM (0 = never) |
+| `DJANGO_SIM_PAUSE_MINUTES` | 60 | how long an auto-pause lasts (resume early from the admin) |
 | `DJANGO_WEBHOOK_SECRET` | unset | if set, webhooks carry `X-Signature: sha256=<hmac>` |
 | `DJANGO_STATIC_ROOT/_URL`, `DJANGO_MEDIA_ROOT/_URL` | see settings | static and media |
 | `DJANGO_SIMPLE_JWT_*`, `DJANGO_EMAIL_*` | see settings | template settings |

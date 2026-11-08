@@ -33,6 +33,7 @@ class SmsMessageSerializer(serializers.ModelSerializer):
             "requested_node",
             "sim_slot",
             "subscription_id",
+            "parts",
             "client_reference",
             "callback_url",
             "attempts",

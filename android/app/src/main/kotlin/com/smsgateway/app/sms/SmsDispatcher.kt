@@ -36,7 +36,10 @@ class SmsDispatcher(
                 delay(PERMISSION_RECHECK_MS)
                 continue
             }
-            rateLimiter.acquire() // cancellable; nothing is claimed yet
+            // Plan first: the limiter works per SIM and in SMS parts. A failed plan (e.g. SIM not
+            // active) is left to send() to report; it only needs one permit.
+            val plan = sender.plan(next)
+            rateLimiter.acquire(plan?.subscriptionId ?: next.subscriptionId, plan?.parts ?: 1) // cancellable; nothing is claimed yet
             // From here on do not abandon a claimed message half way.
             withContext(NonCancellable) {
                 repository.claim(next.id)?.let { sender.send(it) }

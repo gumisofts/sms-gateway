@@ -1,0 +1,123 @@
+{% extends 'admin/base.html' %}
+{% load i18n unfold %}
+
+{% block title %}{% trans "Dashboard" %} | {{ site_title|default:_('Django site admin') }}{% endblock %}
+
+{% block branding %}
+    {% include "unfold/helpers/site_branding.html" %}
+{% endblock %}
+
+{% block content %}
+<div class="flex flex-col gap-6">
+
+    <div class="flex flex-row items-end justify-between">
+        <div>
+            <h1 class="font-semibold text-2xl text-font-important-light dark:text-font-important-dark">SMS Gateway</h1>
+            <p class="text-font-subtle-light dark:text-font-subtle-dark">{{ today_label }} · counters reset at midnight ({{ tz_name }})</p>
+        </div>
+        {% component "unfold/components/button.html" with href=messages_url variant="default" %}All messages{% endcomponent %}
+    </div>
+
+    {% if limit_not_raised or paused or offline %}
+        <div class="grid grid-cols-1 gap-4 lg:grid-cols-3">
+            {% if limit_not_raised %}
+                {% component "unfold/components/card.html" with title="Android SMS limit not raised" title_icon="block" %}
+                    <p class="mb-2 text-font-subtle-light dark:text-font-subtle-dark">These online phones may stop after ~30 SMS per 30 minutes. Run the provisioning script (docs/DEVICE_SETUP.md).</p>
+                    <ul class="flex flex-col gap-1">
+                        {% for node in limit_not_raised %}
+                            <li><a class="text-primary-600 dark:text-primary-500" href="{% url 'admin:nodes_node_change' node.pk %}">{{ node.device_name|default:node.node_id }}</a> · {% if node.sms_limit_raised is None %}unknown{% else %}not raised{% endif %}</li>
+                        {% endfor %}
+                    </ul>
+                {% endcomponent %}
+            {% endif %}
+
+            {% if paused %}
+                {% component "unfold/components/card.html" with title="Paused SIMs" title_icon="pause_circle" %}
+                    <p class="mb-2 text-font-subtle-light dark:text-font-subtle-dark">Auto-paused after repeated failures (possible carrier block). Resume from the SIM list.</p>
+                    <ul class="flex flex-col gap-1">
+                        {% for row in paused %}
+                            <li><a class="text-primary-600 dark:text-primary-500" href="{{ row.url }}">{{ row.sim }}</a><br><span class="text-xs text-font-subtle-light dark:text-font-subtle-dark">until {{ row.sim.paused_until|time:"H:i" }} · {{ row.sim.pause_reason }}</span></li>
+                        {% endfor %}
+                    </ul>
+                {% endcomponent %}
+            {% endif %}
+
+            {% if offline %}
+                {% component "unfold/components/card.html" with title="Offline phones" title_icon="signal_disconnected" %}
+                    <ul class="flex flex-col gap-1">
+                        {% for node in offline %}
+                            <li><a class="text-primary-600 dark:text-primary-500" href="{% url 'admin:nodes_node_change' node.pk %}">{{ node.device_name|default:node.node_id }}</a> · last seen {% if node.last_seen_at %}{{ node.last_seen_at|timesince }} ago{% else %}never{% endif %}</li>
+                        {% endfor %}
+                    </ul>
+                {% endcomponent %}
+            {% endif %}
+        </div>
+    {% endif %}
+
+    <div class="grid grid-cols-1 gap-4 md:grid-cols-2 lg:grid-cols-4">
+        {% for kpi in kpis %}
+            {% component "unfold/components/card.html" %}
+                {% component "unfold/components/text.html" %}{{ kpi.title }}{% endcomponent %}
+                {% component "unfold/components/title.html" with class="text-3xl tabular-nums" %}{{ kpi.value }}{% endcomponent %}
+                <p class="mt-1 text-xs text-font-subtle-light dark:text-font-subtle-dark">{{ kpi.footer }}</p>
+            {% endcomponent %}
+        {% endfor %}
+    </div>
+
+    <div class="grid grid-cols-1 gap-4 lg:grid-cols-3">
+        {% for item in fleet %}
+            {% component "unfold/components/card.html" with href=item.url %}
+                {% component "unfold/components/text.html" %}{{ item.title }}{% endcomponent %}
+                {% component "unfold/components/title.html" with class="text-2xl tabular-nums" %}{{ item.value }}{% endcomponent %}
+            {% endcomponent %}
+        {% endfor %}
+    </div>
+
+    {% component "unfold/components/card.html" with title="Last 24 hours" description="Messages by creation hour" %}
+        {% component "unfold/components/chart/bar.html" with data=chart height=320 %}{% endcomponent %}
+    {% endcomponent %}
+
+    {% component "unfold/components/card.html" with title="SIM lanes today" description="Parts dispatched since midnight against each SIM's daily cap" %}
+        {% if sim_rows %}
+            <div class="overflow-x-auto -mx-6 -mb-6">
+                <table class="w-full border-separate border-spacing-none">
+                    <thead>
+                        <tr class="bg-base-50 dark:bg-white/[.02]">
+                            <th class="border-b border-base-200 dark:border-base-800 font-semibold px-6 py-2 text-left">SIM</th>
+                            <th class="border-b border-base-200 dark:border-base-800 font-semibold px-3 py-2 text-left">State</th>
+                            <th class="border-b border-base-200 dark:border-base-800 font-semibold px-3 py-2 text-left w-1/3">Today</th>
+                            <th class="border-b border-base-200 dark:border-base-800 font-semibold px-3 py-2 text-left">Delivered</th>
+                            <th class="border-b border-base-200 dark:border-base-800 font-semibold px-6 py-2 text-left">Failed</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for row in sim_rows %}
+                            <tr>
+                                <td class="border-b border-base-200 dark:border-base-800 px-6 py-2">
+                                    <a class="text-primary-600 dark:text-primary-500" href="{{ row.url }}">{{ row.sim.label|default:row.sim.carrier|default:"SIM" }} · slot {{ row.sim.slot }}</a>
+                                    <div class="text-xs text-font-subtle-light dark:text-font-subtle-dark">{{ row.sim.node.device_name|default:row.sim.node.node_id }}{% if not row.online %} · offline{% endif %}</div>
+                                </td>
+                                <td class="border-b border-base-200 dark:border-base-800 px-3 py-2">
+                                    {% component "unfold/helpers/label.html" with variant=row.variant %}{{ row.state }}{% endcomponent %}
+                                </td>
+                                <td class="border-b border-base-200 dark:border-base-800 px-3 py-2">
+                                    {% if row.cap %}
+                                        {% component "unfold/components/progress.html" with value=row.pct description=row.usage_text %}{% endcomponent %}
+                                    {% else %}
+                                        {{ row.usage_text }}
+                                    {% endif %}
+                                </td>
+                                <td class="border-b border-base-200 dark:border-base-800 px-3 py-2 tabular-nums">{{ row.delivered }}</td>
+                                <td class="border-b border-base-200 dark:border-base-800 px-6 py-2 tabular-nums">{{ row.failed }}</td>
+                            </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+        {% else %}
+            <p class="text-font-subtle-light dark:text-font-subtle-dark">No SIMs yet. Connect a phone (docs/DEVICE_SETUP.md).</p>
+        {% endif %}
+    {% endcomponent %}
+
+</div>
+{% endblock %}

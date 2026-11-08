@@ -14,6 +14,10 @@
     <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
     <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <!-- Only grantable via adb (pm grant); lets the app raise Android's per-app SMS limit. -->
+    <uses-permission
+        android:name="android.permission.WRITE_SECURE_SETTINGS"
+        tools:ignore="ProtectedPermissions" />
     <!--
       Android 14+ requires every foreground service to declare a type plus the matching
       FOREGROUND_SERVICE_<TYPE> permission. "remoteMessaging" is documented for "transferring

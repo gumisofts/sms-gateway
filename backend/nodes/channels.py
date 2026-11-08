@@ -20,11 +20,15 @@ def send_sms_event(message) -> dict:
         "to": message.to,
         "body": message.body,
     }
-    # subscriptionId wins on the node; omit what is not requested.
-    if message.sim_slot is not None:
-        payload["simSlot"] = message.sim_slot
-    if message.subscription_id is not None:
-        payload["subscriptionId"] = message.subscription_id
+    # The dispatcher's SIM lane wins; otherwise what the client requested.
+    # subscriptionId wins on the node; omit what is not set.
+    sim = message.sim if message.sim_id else None
+    slot = sim.slot if sim else message.sim_slot
+    subscription_id = sim.subscription_id if sim else message.subscription_id
+    if slot is not None:
+        payload["simSlot"] = slot
+    if subscription_id is not None:
+        payload["subscriptionId"] = subscription_id
     return {"type": "node.send_sms", "payload": payload}
 
 

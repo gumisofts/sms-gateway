@@ -11,16 +11,19 @@ from datetime import timedelta
 
 from django.conf import settings
 from django.db import transaction
-from django.db.models import Count, Q
+from django.db.models import Count, Q, Sum
 from django.utils import timezone
 
 from nodes.channels import send_sms_event, send_to_node
-from nodes.models import Node
+from nodes.models import Node, NodeSim
 
 from . import services
 from .models import SmsMessage, Status
 
 logger = logging.getLogger(__name__)
+
+# dispatch_pending gives up after this many messages in a row found no lane.
+DISPATCH_MAX_MISSES = 25
 
 
 def eligible_nodes(message: SmsMessage, allow_tried: bool = False):
@@ -39,37 +42,112 @@ def eligible_nodes(message: SmsMessage, allow_tried: bool = False):
     return qs.distinct()
 
 
-def pick_node(message: SmsMessage, allow_tried: bool = False) -> Node | None:
-    """Least loaded eligible node that is not at its per-minute rate."""
-    nodes = list(eligible_nodes(message, allow_tried))
+def _sim_matches(message: SmsMessage, sim: NodeSim) -> bool:
+    if message.subscription_id is not None:
+        return sim.subscription_id == message.subscription_id
+    if message.sim_slot is not None:
+        return sim.slot == message.sim_slot
+    return True
+
+
+def day_start(now=None):
+    """Start of the current day in TIME_ZONE (the daily cap boundary)."""
+    local = timezone.localtime(now or timezone.now())
+    return local.replace(hour=0, minute=0, second=0, microsecond=0)
+
+
+def _parts_by(field: str, ids, since) -> dict:
+    """Sum of parts dispatched since ``since``, grouped by ``field`` (sim/node)."""
+    if not ids:
+        return {}
+    return dict(
+        SmsMessage.objects.filter(
+            **{f"{field}_id__in": ids, "dispatched_at__gte": since}
+        )
+        .values(f"{field}_id")
+        .annotate(total=Sum("parts"))
+        .values_list(f"{field}_id", "total")
+    )
+
+
+def sim_usage(sim_ids, now=None) -> tuple[dict, dict]:
+    """(parts in the last minute, parts today) per SIM id."""
+    now = now or timezone.now()
+    return (
+        _parts_by("sim", sim_ids, now - timedelta(minutes=1)),
+        _parts_by("sim", sim_ids, day_start(now)),
+    )
+
+
+def _has_room(used: int, limit: int, parts: int) -> bool:
+    """0 = unlimited. A message bigger than the whole limit still fits an idle lane."""
+    if not limit:
+        return True
+    return used == 0 or used + parts <= limit
+
+
+def pick_lane(
+    message: SmsMessage, allow_tried: bool = False
+) -> tuple[Node, NodeSim | None] | None:
+    """Least loaded (node, SIM) lane with room for the message.
+
+    Nodes that reported SIMs are scheduled per SIM: each enabled, present and
+    unpaused SIM has its own parts-per-minute rate and daily cap. Nodes that
+    reported no SIMs (e.g. no phone-state permission) are a single lane on
+    the default SIM, paced by the node's own reported rate.
+    """
+    nodes = list(eligible_nodes(message, allow_tried).prefetch_related("sims"))
     if not nodes:
         return None
-    ids = [n.pk for n in nodes]
+    now = timezone.now()
+    parts = max(message.parts or 1, 1)
+    node_ids = [n.pk for n in nodes]
     unacked = dict(
         SmsMessage.objects.filter(
-            node_id__in=ids, status=Status.DISPATCHED, acked_at__isnull=True
+            node_id__in=node_ids, status=Status.DISPATCHED, acked_at__isnull=True
         )
         .values("node_id")
         .annotate(c=Count("id"))
         .values_list("node_id", "c")
     )
-    minute_ago = timezone.now() - timedelta(minutes=1)
-    recent = dict(
-        SmsMessage.objects.filter(node_id__in=ids, dispatched_at__gte=minute_ago)
-        .values("node_id")
-        .annotate(c=Count("id"))
-        .values_list("node_id", "c")
-    )
+    sims = [s for n in nodes for s in n.sims.all() if s.is_present]
+    sim_minute, sim_today = sim_usage([s.pk for s in sims], now)
+    node_minute = _parts_by("node", node_ids, now - timedelta(minutes=1))
+
     best = None
     for node in nodes:
-        sent_last_minute = recent.get(node.pk, 0)
-        if node.rate_per_minute and sent_last_minute >= node.rate_per_minute:
-            continue
         load = node.queue_depth + unacked.get(node.pk, 0)
-        key = (load, sent_last_minute, node.pk)
-        if best is None or key < best[0]:
-            best = (key, node)
-    return best[1] if best else None
+        present = [s for s in node.sims.all() if s.is_present]
+        if present:
+            lanes = []
+            for sim in present:
+                if (
+                    not sim.is_enabled
+                    or sim.is_paused(now)
+                    or not _sim_matches(message, sim)
+                ):
+                    continue
+                minute = sim_minute.get(sim.pk, 0)
+                today = sim_today.get(sim.pk, 0)
+                if not _has_room(minute, sim.effective_rate_per_minute, parts):
+                    continue
+                if not _has_room(today, sim.effective_daily_limit, parts):
+                    continue
+                lanes.append(((load, minute, today, node.pk, sim.slot), sim))
+        else:
+            minute = node_minute.get(node.pk, 0)
+            if not _has_room(minute, node.rate_per_minute, parts):
+                continue
+            lanes = [((load, minute, 0, node.pk, -1), None)]
+        for key, sim in lanes:
+            if best is None or key < best[0]:
+                best = (key, node, sim)
+    return (best[1], best[2]) if best else None
+
+
+def pick_node(message: SmsMessage, allow_tried: bool = False) -> Node | None:
+    lane = pick_lane(message, allow_tried)
+    return lane[0] if lane else None
 
 
 def push(message: SmsMessage, node_id: str) -> None:
@@ -93,11 +171,13 @@ def dispatch_message(message_id, allow_tried: bool = False) -> bool:
         if message.dispatch_attempts >= settings.MESSAGE_MAX_DISPATCH_ATTEMPTS:
             services.fail(message, "Gave up after too many dispatch attempts.")
             return False
-        node = pick_node(message, allow_tried)
-        if node is None:
+        lane = pick_lane(message, allow_tried)
+        if lane is None:
             return False
+        node, sim = lane
         message.status = Status.DISPATCHED
         message.node = node
+        message.sim = sim
         message.dispatched_at = timezone.now()
         message.acked_at = None
         message.dispatch_attempts += 1
@@ -105,6 +185,7 @@ def dispatch_message(message_id, allow_tried: bool = False) -> bool:
             update_fields=[
                 "status",
                 "node",
+                "sim",
                 "dispatched_at",
                 "acked_at",
                 "dispatch_attempts",
@@ -124,12 +205,17 @@ def dispatch_pending(limit: int = 200, allow_tried: bool = False) -> int:
         .order_by("created_at")
         .values_list("id", flat=True)[:limit]
     )
-    count = 0
+    count = misses = 0
     for message_id in ids:
         if dispatch_message(message_id, allow_tried):
             count += 1
-        elif not Node.objects.filter(is_active=True, connected=True).exists():
+            misses = 0
+            continue
+        misses += 1
+        if not Node.objects.filter(is_active=True, connected=True).exists():
             break  # nobody online: stop early
+        if misses >= DISPATCH_MAX_MISSES:
+            break  # lanes are full (rate/daily caps): retry on the next run
     return count
 
 
@@ -152,7 +238,7 @@ def redispatch_unacked() -> int:
         with transaction.atomic():
             message = (
                 SmsMessage.objects.select_for_update(skip_locked=True)
-                .select_related("node")
+                .select_related("node", "sim")
                 .filter(pk=message_id, status=Status.DISPATCHED, acked_at__isnull=True)
                 .first()
             )
@@ -176,8 +262,9 @@ def redispatch_unacked() -> int:
                 message.tried_nodes = tried
                 message.status = Status.PENDING
                 message.node = None
+                message.sim = None
                 message.save(
-                    update_fields=["tried_nodes", "status", "node", "updated_at"]
+                    update_fields=["tried_nodes", "status", "node", "sim", "updated_at"]
                 )
                 released = True
             handled += 1

@@ -14,6 +14,7 @@ import com.smsgateway.app.gateway.NodeRegistrar
 import com.smsgateway.app.sms.RateLimiter
 import com.smsgateway.app.sms.SimManager
 import com.smsgateway.app.sms.SmsDispatcher
+import com.smsgateway.app.sms.SmsLimitManager
 import com.smsgateway.app.sms.SmsSender
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -40,7 +41,8 @@ class AppContainer(context: Context) {
 
     val settings = SettingsStore(appContext)
     val simManager = SimManager(appContext)
-    val deviceStatus = DeviceStatusProvider(appContext, simManager)
+    val smsLimit = SmsLimitManager(appContext)
+    val deviceStatus = DeviceStatusProvider(appContext, simManager, smsLimit)
 
     private val database: AppDatabase by lazy {
         Room.databaseBuilder(appContext, AppDatabase::class.java, "gateway.db").build()

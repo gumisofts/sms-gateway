@@ -195,7 +195,7 @@ class GatewayClient(
     private suspend fun reportStatusLoop(send: (NodeMessage) -> Boolean) {
         messages.observeUnreported().collectLatest { pending ->
             for (m in pending) {
-                val update = NodeMessage.StatusUpdate(m.id, m.status.wire, m.attempts, m.errorCode, m.errorMessage, m.updatedAt)
+                val update = NodeMessage.StatusUpdate(m.id, m.status.wire, m.attempts, m.errorCode, m.errorMessage, m.updatedAt, m.partsTotal.takeIf { it > 0 })
                 if (!send(update)) return@collectLatest // socket is closing; retried after reconnect
                 messages.markReported(m.id, m.status)
             }

@@ -28,6 +28,20 @@ class SmsSender(
     fun hasPermission(): Boolean =
         ContextCompat.checkSelfPermission(context, Manifest.permission.SEND_SMS) == PackageManager.PERMISSION_GRANTED
 
+    /** SIM a message will go out on and how many SMS parts it needs. */
+    data class SendPlan(val subscriptionId: Int?, val parts: Int)
+
+    /** Resolves the SIM and counts parts without sending. Null when that is not possible (send() reports why). */
+    fun plan(message: OutboundMessage): SendPlan? {
+        val subId = sims.resolveSubscriptionId(message.subscriptionId, message.simSlot)
+        if ((message.subscriptionId != null || message.simSlot != null) && subId == null) return null
+        return try {
+            SendPlan(subId, smsManager(subId).divideMessage(message.body).size.coerceAtLeast(1))
+        } catch (_: RuntimeException) {
+            null
+        }
+    }
+
     /** [message] must already be claimed, i.e. `status == SENDING` with `attempts` incremented. */
     suspend fun send(message: OutboundMessage) {
         val id = message.id

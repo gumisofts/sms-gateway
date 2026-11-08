@@ -21,22 +21,38 @@ class NodeDisabled(Exception):
 
 
 def sync_sims(node: Node, sims: list[dict]) -> None:
-    """Make the node's SIM rows match the reported list (keyed by slot)."""
+    """Make the node's SIM rows match the reported list (keyed by slot).
+
+    Rows are never deleted here: a SIM missing from the report is marked
+    ``is_present=False`` so its admin settings and pause state survive. A
+    different subscription in a slot means a swapped SIM: its health resets.
+    """
     seen = []
     for sim in sims or []:
         slot = sim.get("slot")
         if slot is None:
             continue
         seen.append(slot)
-        NodeSim.objects.update_or_create(
-            node=node,
-            slot=slot,
-            defaults={
-                "subscription_id": sim.get("subscriptionId"),
-                "carrier": sim.get("carrier") or "",
-            },
-        )
-    node.sims.exclude(slot__in=seen).delete()
+        subscription_id = sim.get("subscriptionId")
+        row = NodeSim.objects.filter(node=node, slot=slot).first()
+        if row is None:
+            NodeSim.objects.create(
+                node=node,
+                slot=slot,
+                subscription_id=subscription_id,
+                carrier=sim.get("carrier") or "",
+            )
+            continue
+        if row.subscription_id != subscription_id:
+            row.consecutive_failures = 0
+            row.paused_until = None
+            row.pause_reason = ""
+            row.last_error = ""
+        row.subscription_id = subscription_id
+        row.carrier = sim.get("carrier") or ""
+        row.is_present = True
+        row.save()
+    node.sims.exclude(slot__in=seen).update(is_present=False)
 
 
 @transaction.atomic
@@ -116,6 +132,15 @@ def record_heartbeat(node_pk: int, data: dict) -> None:
     )
     if "sims" in data:
         sync_sims(node, data["sims"])
+    limit = data.get("smsLimit")
+    if isinstance(limit, dict):
+        raised = limit.get("raised")
+        max_count = limit.get("maxCount")
+        node.sms_limit_raised = raised if isinstance(raised, bool) else None
+        node.sms_limit_max_count = (
+            max(int(max_count), 0) if isinstance(max_count, int) else None
+        )
+        node.save(update_fields=["sms_limit_raised", "sms_limit_max_count"])
 
 
 def _clamp(value, low, high):
