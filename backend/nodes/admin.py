@@ -200,7 +200,9 @@ class NodeAdmin(ModelAdmin):
     def sim_count(self, obj):
         return obj._sims
 
-    @action(description="Disable selected phones (disconnects them)")
+    @action(
+        description="Disable selected phones (disconnects them)", permissions=["change"]
+    )
     def disable_nodes(self, request, queryset):
         nodes = list(queryset.filter(is_active=True))
         queryset.update(is_active=False)
@@ -211,7 +213,7 @@ class NodeAdmin(ModelAdmin):
                 pass  # offline already; it cannot reconnect while disabled
         self.message_user(request, f"Disabled {len(nodes)} phone(s).", messages.SUCCESS)
 
-    @action(description="Enable selected phones")
+    @action(description="Enable selected phones", permissions=["change"])
     def enable_nodes(self, request, queryset):
         count = queryset.update(is_active=True)
         self.message_user(request, f"Enabled {count} phone(s).", messages.SUCCESS)
@@ -304,7 +306,9 @@ class NodeSimAdmin(ModelAdmin):
         pct = min(round(100 * obj._today / cap), 100)
         return f"{obj._today} / {cap} ({pct}%)"
 
-    @action(description="Resume selected SIMs (clear auto-pause)")
+    @action(
+        description="Resume selected SIMs (clear auto-pause)", permissions=["change"]
+    )
     def resume_sims(self, request, queryset):
         from messaging import services
 
@@ -314,12 +318,12 @@ class NodeSimAdmin(ModelAdmin):
             count += 1
         self.message_user(request, f"Resumed {count} SIM(s).", messages.SUCCESS)
 
-    @action(description="Enable selected SIMs")
+    @action(description="Enable selected SIMs", permissions=["change"])
     def enable_sims(self, request, queryset):
         count = queryset.update(is_enabled=True)
         self.message_user(request, f"Enabled {count} SIM(s).", messages.SUCCESS)
 
-    @action(description="Disable selected SIMs")
+    @action(description="Disable selected SIMs", permissions=["change"])
     def disable_sims(self, request, queryset):
         count = queryset.update(is_enabled=False)
         self.message_user(request, f"Disabled {count} SIM(s).", messages.SUCCESS)

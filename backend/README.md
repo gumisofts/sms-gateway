@@ -58,6 +58,19 @@ drf-spectacular (Swagger UI at `/`).
   usage). SIM rate/cap/enabled are editable in the SIM list; actions resume/enable/disable
   SIMs, disable phones, cancel/retry messages, revoke API keys. API keys can be created in
   the admin (shown once).
+* **Bulk send (admin)**: *Bulk send* takes a pasted list and/or a CSV (phone column plus
+  optional `{column}` placeholders and a per-row `message` column), normalises local numbers
+  (`DJANGO_BULK_SEND_COUNTRY_CODE`, default 251), removes duplicates and shows a preview
+  (recipients, invalid numbers, parts, today's capacity) before you confirm. Each send is a
+  batch with progress, a link to its messages and a "cancel waiting" action; its messages
+  stay valid for the batch's `valid_hours` (default 24) instead of the global pending TTL.
+  At most `DJANGO_BULK_SEND_MAX_RECIPIENTS` (50000) per batch.
+* **Staff roles** (`auth/roles.py`, groups re-synced on every `migrate`): *Gateway admin*
+  (everything incl. users, all messages), *Operator* (bulk send, cancel/retry their own
+  messages, read-only phones/SIMs, sees only their own messages and batches) and *Viewer*
+  (read-only, all messages). Set a user's role on the user form or with the list actions;
+  the role turns admin access (`is_staff`) on/off. Only superusers can see or edit
+  superusers and grant raw permissions.
 * **Acks**: `accepted: false` sends the job to a different node (`invalid_job` fails it).
   Jobs not acked within `DJANGO_MESSAGE_ACK_TIMEOUT_SEC` are re-sent to the same node if it is
   still connected (ids are idempotent on the node) or moved to another node if it is offline.
@@ -119,6 +132,8 @@ Formatting: `black`, `isort --profile black`, `flake8` (pre-commit is configured
 | `DJANGO_SIM_DEFAULT_DAILY_LIMIT` | 1000 | SMS parts per day per SIM (override per SIM; 0 = unlimited) |
 | `DJANGO_SIM_PAUSE_AFTER_FAILURES` | 5 | failed messages in a row that auto-pause a SIM (0 = never) |
 | `DJANGO_SIM_PAUSE_MINUTES` | 60 | how long an auto-pause lasts (resume early from the admin) |
+| `DJANGO_BULK_SEND_MAX_RECIPIENTS` | 50000 | most recipients in one admin bulk send |
+| `DJANGO_BULK_SEND_COUNTRY_CODE` | 251 | added to local numbers (09…, 9…) in bulk sends |
 | `DJANGO_WEBHOOK_SECRET` | unset | if set, webhooks carry `X-Signature: sha256=<hmac>` |
 | `DJANGO_STATIC_ROOT/_URL`, `DJANGO_MEDIA_ROOT/_URL` | see settings | static and media |
 | `DJANGO_SIMPLE_JWT_*`, `DJANGO_EMAIL_*` | see settings | template settings |

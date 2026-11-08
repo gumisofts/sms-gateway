@@ -1,9 +1,14 @@
+from datetime import timedelta
+
 from django import forms
+from django.conf import settings
 from django.contrib import admin, messages
 from django.utils import timezone
 from unfold.admin import ModelAdmin
 from unfold.contrib.filters.admin import RangeDateTimeFilter
 from unfold.decorators import action, display
+
+from auth.roles import can_view_all
 
 from . import services
 from .models import ApiKey, SmsMessage, Status
@@ -38,14 +43,15 @@ class SmsMessageAdmin(ModelAdmin):
     list_filter = (
         "status",
         ("created_at", RangeDateTimeFilter),
+        ("batch", admin.RelatedOnlyFieldListFilter),
         "node",
         "parts",
     )
     list_filter_submit = True
     search_fields = ("id", "to", "client_reference", "owner__phone_number")
     date_hierarchy = "created_at"
-    list_select_related = ("node", "sim", "owner")
-    raw_id_fields = ("owner", "node", "sim", "requested_node")
+    list_select_related = ("node", "sim", "owner", "batch")
+    raw_id_fields = ("owner", "node", "sim", "requested_node", "batch")
     list_per_page = 100
     actions = ["cancel_messages", "retry_messages"]
     readonly_fields = (
@@ -67,7 +73,17 @@ class SmsMessageAdmin(ModelAdmin):
     fieldsets = (
         (
             None,
-            {"fields": ("id", "owner", "to", "body", "parts", "client_reference")},
+            {
+                "fields": (
+                    "id",
+                    "owner",
+                    "batch",
+                    "to",
+                    "body",
+                    "parts",
+                    "client_reference",
+                )
+            },
         ),
         (
             "Routing",
@@ -113,7 +129,13 @@ class SmsMessageAdmin(ModelAdmin):
     )
 
     def has_add_permission(self, request):
-        return False  # messages come from the API
+        return False  # messages come from the API or a bulk send
+
+    def get_queryset(self, request):
+        qs = super().get_queryset(request)
+        if not can_view_all(request.user):
+            qs = qs.filter(owner=request.user)
+        return qs
 
     @display(description="To", header=True, ordering="to")
     def display_to(self, obj):
@@ -124,7 +146,10 @@ class SmsMessageAdmin(ModelAdmin):
     def display_status(self, obj):
         return obj.status
 
-    @action(description="Cancel selected messages (if not yet on a phone)")
+    @action(
+        description="Cancel selected messages (if not yet on a phone)",
+        permissions=["change"],
+    )
     def cancel_messages(self, request, queryset):
         done = skipped = 0
         for message_id in queryset.values_list("id", flat=True):
@@ -139,7 +164,9 @@ class SmsMessageAdmin(ModelAdmin):
             messages.SUCCESS if done else messages.WARNING,
         )
 
-    @action(description="Retry selected failed/expired messages")
+    @action(
+        description="Retry selected failed/expired messages", permissions=["change"]
+    )
     def retry_messages(self, request, queryset):
         ids = list(
             queryset.filter(status__in=[Status.FAILED, Status.EXPIRED]).values_list(
@@ -156,8 +183,8 @@ class SmsMessageAdmin(ModelAdmin):
             error_code=None,
             error_message="",
             failed_at=None,
-            # A fresh TTL: expiry counts from created_at.
-            created_at=timezone.now(),
+            expires_at=timezone.now()
+            + timedelta(seconds=settings.MESSAGE_PENDING_TTL_SEC),
         )
         services.schedule_dispatch(*ids)
         self.message_user(
@@ -225,9 +252,13 @@ class ApiKeyAdmin(ModelAdmin):
     def display_state(self, obj):
         return "Active" if obj.is_active else "Revoked"
 
-    @action(description="Revoke selected keys")
+    @action(description="Revoke selected keys", permissions=["change"])
     def revoke_keys(self, request, queryset):
         count = queryset.filter(revoked_at__isnull=True).update(
             revoked_at=timezone.now()
         )
         self.message_user(request, f"Revoked {count} key(s).", messages.SUCCESS)
+
+
+# Registers the bulk send admin.
+from . import admin_bulk  # noqa: E402,F401

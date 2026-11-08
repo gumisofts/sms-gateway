@@ -12,6 +12,7 @@ from datetime import timezone as dt_timezone
 
 from django.conf import settings
 from django.db import IntegrityError, transaction
+from django.db.models import Q
 from django.utils import timezone
 
 from nodes.models import Node, NodeSim
@@ -140,9 +141,13 @@ def cancel_message(message_id) -> SmsMessage:
 
 
 def expire_pending() -> int:
-    cutoff = timezone.now() - timedelta(seconds=settings.MESSAGE_PENDING_TTL_SEC)
+    now = timezone.now()
+    cutoff = now - timedelta(seconds=settings.MESSAGE_PENDING_TTL_SEC)
     ids = list(
-        SmsMessage.objects.filter(status=Status.PENDING, created_at__lt=cutoff)
+        SmsMessage.objects.filter(status=Status.PENDING)
+        .filter(
+            Q(expires_at__lt=now) | Q(expires_at__isnull=True, created_at__lt=cutoff)
+        )
         .order_by("created_at")
         .values_list("id", flat=True)[:1000]
     )

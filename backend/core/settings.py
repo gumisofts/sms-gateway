@@ -290,6 +290,11 @@ SIM_DEFAULT_DAILY_LIMIT = int(os.getenv("DJANGO_SIM_DEFAULT_DAILY_LIMIT", 1000))
 # for SIM_PAUSE_MINUTES. 0 disables auto-pause.
 SIM_PAUSE_AFTER_FAILURES = int(os.getenv("DJANGO_SIM_PAUSE_AFTER_FAILURES", 5))
 SIM_PAUSE_MINUTES = int(os.getenv("DJANGO_SIM_PAUSE_MINUTES", 60))
+
+# Admin bulk send: most recipients per batch, and the country code added to
+# local numbers (09..., 9..., 7...) in pasted lists and CSVs.
+BULK_SEND_MAX_RECIPIENTS = int(os.getenv("DJANGO_BULK_SEND_MAX_RECIPIENTS", 50000))
+BULK_SEND_COUNTRY_CODE = os.getenv("DJANGO_BULK_SEND_COUNTRY_CODE", "251")
 # If set, status webhooks carry an X-Signature: sha256=<hmac of body>.
 WEBHOOK_SECRET = os.getenv("DJANGO_WEBHOOK_SECRET", "")
 
@@ -366,19 +371,34 @@ UNFOLD = {
                         "link": reverse_lazy("admin:index"),
                     },
                     {
+                        "title": "Bulk send",
+                        "icon": "send",
+                        "link": reverse_lazy("admin:messaging_smsbatch_add"),
+                        "permission": "core.admin_access.bulk_send",
+                    },
+                    {
+                        "title": "Bulk send history",
+                        "icon": "history",
+                        "link": reverse_lazy("admin:messaging_smsbatch_changelist"),
+                        "permission": "core.admin_access.view_batches",
+                    },
+                    {
                         "title": "Messages",
                         "icon": "sms",
                         "link": reverse_lazy("admin:messaging_smsmessage_changelist"),
+                        "permission": "core.admin_access.view_messages",
                     },
                     {
                         "title": "Phones (nodes)",
                         "icon": "smartphone",
                         "link": reverse_lazy("admin:nodes_node_changelist"),
+                        "permission": "core.admin_access.view_nodes",
                     },
                     {
                         "title": "SIMs",
                         "icon": "sim_card",
                         "link": reverse_lazy("admin:nodes_nodesim_changelist"),
+                        "permission": "core.admin_access.view_sims",
                     },
                 ],
             },
@@ -390,21 +410,25 @@ UNFOLD = {
                         "title": "API keys",
                         "icon": "key",
                         "link": reverse_lazy("admin:messaging_apikey_changelist"),
+                        "permission": "core.admin_access.view_api_keys",
                     },
                     {
                         "title": "Users",
                         "icon": "person",
                         "link": reverse_lazy("admin:accounts_user_changelist"),
+                        "permission": "core.admin_access.view_users",
                     },
                     {
                         "title": "Groups",
                         "icon": "group",
                         "link": reverse_lazy("admin:auth_group_changelist"),
+                        "permission": "core.admin_access.view_groups",
                     },
                     {
                         "title": "Node tokens",
                         "icon": "token",
                         "link": reverse_lazy("admin:nodes_nodetoken_changelist"),
+                        "permission": "core.admin_access.view_node_tokens",
                     },
                 ],
             },

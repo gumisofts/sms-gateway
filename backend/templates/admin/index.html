@@ -13,9 +13,14 @@
     <div class="flex flex-row items-end justify-between">
         <div>
             <h1 class="font-semibold text-2xl text-font-important-light dark:text-font-important-dark">SMS Gateway</h1>
-            <p class="text-font-subtle-light dark:text-font-subtle-dark">{{ today_label }} · counters reset at midnight ({{ tz_name }})</p>
+            <p class="text-font-subtle-light dark:text-font-subtle-dark">{% if scoped %}Your messages · {% endif %}{{ today_label }} · counters reset at midnight ({{ tz_name }})</p>
         </div>
-        {% component "unfold/components/button.html" with href=messages_url variant="default" %}All messages{% endcomponent %}
+        <div class="flex flex-row gap-2">
+            {% if can_bulk_send %}
+                {% component "unfold/components/button.html" with href=bulk_url %}Bulk send{% endcomponent %}
+            {% endif %}
+            {% component "unfold/components/button.html" with href=messages_url variant="default" %}{% if scoped %}My messages{% else %}All messages{% endif %}{% endcomponent %}
+        </div>
     </div>
 
     {% if limit_not_raised or paused or offline %}

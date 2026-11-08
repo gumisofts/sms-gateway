@@ -9,6 +9,7 @@ from django.db.models.functions import TruncHour
 from django.urls import reverse
 from django.utils import timezone
 
+from auth.roles import can_view_all
 from messaging.dispatch import day_start
 from messaging.models import IN_FLIGHT, SmsMessage, Status
 from nodes.admin import sim_state
@@ -25,8 +26,8 @@ def _pct(part, whole) -> str:
     return f"{100 * part / whole:.1f}%" if whole else "–"
 
 
-def _today_stats(today):
-    agg = SmsMessage.objects.filter(created_at__gte=today).aggregate(
+def _today_stats(base, today):
+    agg = base.filter(created_at__gte=today).aggregate(
         total=Count("id"),
         parts=Sum("parts"),
         delivered=Count("id", filter=Q(status=Status.DELIVERED)),
@@ -35,18 +36,18 @@ def _today_stats(today):
     )
     agg["parts"] = agg["parts"] or 0
     # Waiting / in flight right now, whenever they were created.
-    agg["pending"] = SmsMessage.objects.filter(status=Status.PENDING).count()
-    agg["in_flight"] = SmsMessage.objects.filter(status__in=IN_FLIGHT).count()
+    agg["pending"] = base.filter(status=Status.PENDING).count()
+    agg["in_flight"] = base.filter(status__in=IN_FLIGHT).count()
     finished = agg["sent"] + agg["failed"]
     agg["success_rate"] = _pct(agg["sent"], finished)
     agg["delivery_rate"] = _pct(agg["delivered"], agg["sent"])
     return agg
 
 
-def _hourly_chart(now):
+def _hourly_chart(base, now):
     start = (now - timedelta(hours=23)).replace(minute=0, second=0, microsecond=0)
     rows = (
-        SmsMessage.objects.filter(created_at__gte=start)
+        base.filter(created_at__gte=start)
         .annotate(hour=TruncHour("created_at"))
         .values("hour")
         .annotate(
@@ -155,7 +156,11 @@ def _sims(now, today):
 def dashboard_callback(request, context):
     now = timezone.now()
     today = day_start(now)
-    stats = _today_stats(today)
+    base = SmsMessage.objects.all()
+    scoped = not can_view_all(request.user)
+    if scoped:
+        base = base.filter(owner=request.user)
+    stats = _today_stats(base, today)
     sim_rows, capacity_left, unlimited = _sims(now, today)
 
     nodes = Node.objects.filter(is_active=True)
@@ -211,7 +216,10 @@ def dashboard_callback(request, context):
                     "url": reverse("admin:nodes_nodesim_changelist"),
                 },
             ],
-            "chart": _hourly_chart(now),
+            "chart": _hourly_chart(base, now),
+            "scoped": scoped,
+            "can_bulk_send": request.user.has_perm("messaging.add_smsbatch"),
+            "bulk_url": reverse("admin:messaging_smsbatch_add"),
             "sim_rows": sim_rows[:50],
             "paused": paused,
             "offline": offline,

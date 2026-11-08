@@ -31,6 +31,50 @@ NODE_STATUSES = frozenset(
 )
 
 
+class SmsBatch(models.Model):
+    """A bulk send from the admin: one row per send, messages link back to it."""
+
+    name = models.CharField(max_length=120)
+    created_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.PROTECT,
+        related_name="sms_batches",
+        help_text="Owner of the batch's messages.",
+    )
+    body = models.TextField(
+        help_text="Message text. {column} placeholders are filled from the CSV."
+    )
+    total = models.PositiveIntegerField(default=0, editable=False)
+    skipped = models.PositiveIntegerField(
+        default=0, editable=False, help_text="Invalid or duplicate recipients."
+    )
+    requested_node = models.ForeignKey(
+        "nodes.Node",
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name="+",
+        help_text="Send only through this phone (optional).",
+    )
+    sim_slot = models.IntegerField(
+        null=True, blank=True, help_text="Send only from this SIM slot (optional)."
+    )
+    callback_url = models.URLField(max_length=500, blank=True)
+    valid_hours = models.PositiveIntegerField(
+        default=24,
+        help_text="Messages still waiting after this many hours expire.",
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ["-created_at"]
+        verbose_name = "bulk send"
+        verbose_name_plural = "bulk sends"
+
+    def __str__(self):
+        return f"{self.name} ({self.total})"
+
+
 class SmsMessage(models.Model):
     # The UUID is the protocol job `id` (the node's idempotency key).
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
@@ -75,6 +119,18 @@ class SmsMessage(models.Model):
         default=1,
         help_text="SMS parts: estimated on creation, then as reported by the phone.",
     )
+    expires_at = models.DateTimeField(
+        null=True,
+        blank=True,
+        help_text="Expire if still pending at this time (default: created + pending TTL).",
+    )
+    batch = models.ForeignKey(
+        SmsBatch,
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name="messages",
+    )
     # node_ids that rejected or timed out, skipped on re-dispatch.
     tried_nodes = models.JSONField(default=list, blank=True)
     dispatch_attempts = models.PositiveIntegerField(default=0)
@@ -94,10 +150,14 @@ class SmsMessage(models.Model):
 
     class Meta:
         ordering = ["-created_at"]
+        permissions = [
+            ("view_all_messages", "Can see every user's messages and batches"),
+        ]
         indexes = [
             models.Index(
                 fields=["status", "created_at"], name="msg_status_created_idx"
             ),
+            models.Index(fields=["batch", "status"], name="msg_batch_status_idx"),
             models.Index(fields=["node", "status"], name="msg_node_status_idx"),
             models.Index(
                 fields=["sim", "dispatched_at"], name="msg_sim_dispatched_idx"
