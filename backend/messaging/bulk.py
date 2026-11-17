@@ -1,6 +1,7 @@
 """Bulk send from the admin: parse recipients, render the text, create a batch.
 
-Recipients come from a pasted list (one number per line, or separated by
+Recipients come from the sender's contacts and contact groups (``{name}`` is the
+contact's name), a pasted list (one number per line, or separated by
 commas/semicolons) and/or a CSV file. A CSV may have a header row; its first
 column named phone/msisdn/number/to/mobile (else the first column) is the
 number, a ``message`` column overrides the text for that row, and every other
@@ -15,7 +16,7 @@ from datetime import timedelta
 
 from django.conf import settings
 from django.db import transaction
-from django.db.models import Sum
+from django.db.models import Q, Sum
 
 from .models import SmsBatch, SmsMessage
 from .segments import count_parts
@@ -77,7 +78,9 @@ def _rows_from_text(text: str):
             yield {"phone": token}
 
 
-def _rows_from_csv(data: bytes):
+def _rows_from_csv(data: bytes, positional: bool = False):
+    """``positional``: a file without a header also gives a ``name``: each row is
+    a number and a name in either order (contact import)."""
     text = data.decode("utf-8-sig", errors="replace")
     sample = text[:4096]
     try:
@@ -91,8 +94,13 @@ def _rows_from_csv(data: bytes):
     has_header = not any(normalize_number(cell) for cell in rows[0]) and any(header)
     if not has_header:
         for row in rows:
-            if row and row[0].strip():
-                yield {"phone": row[0].strip()}
+            cells = [cell.strip() for cell in row]
+            if positional and any(cells):
+                at = next((i for i, c in enumerate(cells) if normalize_number(c)), 0)
+                name = next((c for i, c in enumerate(cells) if i != at and c), "")
+                yield {"phone": cells[at], "name": name}
+            elif cells and cells[0]:
+                yield {"phone": cells[0]}
         return
     phone_col = next((i for i, h in enumerate(header) if h in PHONE_COLUMNS), 0)
     for row in rows[1:]:
@@ -116,10 +124,30 @@ def render(template: str, values: dict, missing: set) -> str:
     return PLACEHOLDER.sub(repl, template)
 
 
-def build_plan(body: str, pasted: str = "", csv_data: bytes | None = None) -> Plan:
+def contact_rows(owner, contacts=(), groups=()) -> list[dict]:
+    """Rows for ``build_plan`` from the owner's contacts and contact groups.
+
+    Filters by owner again, so ids of someone else's contacts never send."""
+    from .models import Contact
+
+    found = (
+        Contact.objects.filter(owner=owner)
+        .filter(
+            Q(pk__in=[c.pk for c in contacts])
+            | Q(groups__in=[g.pk for g in groups], groups__owner=owner)
+        )
+        .distinct()
+    )
+    return [{"phone": c.phone, "name": c.name} for c in found]
+
+
+def build_plan(
+    body: str, pasted: str = "", csv_data: bytes | None = None, rows=()
+) -> Plan:
+    """``rows`` are extra recipients as dicts (``phone`` plus placeholder values)."""
     plan = Plan()
     seen = set()
-    rows = list(_rows_from_text(pasted))
+    rows = list(rows) + list(_rows_from_text(pasted))
     if csv_data:
         rows += list(_rows_from_csv(csv_data))
     for values in rows:
@@ -185,7 +213,7 @@ def summary(plan: Plan) -> str:
         lines.append(f"{plan.duplicates} duplicate(s) removed.")
     if plan.missing_placeholders:
         names = ", ".join("{%s}" % n for n in sorted(plan.missing_placeholders))
-        lines.append(f"Warning: no CSV column for {names}; left as-is.")
+        lines.append(f"Warning: no value for {names}; left as-is.")
     cap = capacity_left_today()
     if cap is not None:
         lines.append(f"Capacity left today on online SIMs: {cap} parts.")

@@ -12,7 +12,9 @@ from django.utils.html import format_html
 from unfold.admin import ModelAdmin
 from unfold.decorators import action, display
 from unfold.widgets import (
+    UnfoldAdminCheckboxSelectMultipleWidget,
     UnfoldAdminFileFieldWidget,
+    UnfoldAdminSelect2MultipleWidget,
     UnfoldAdminTextareaWidget,
     UnfoldBooleanSwitchWidget,
 )
@@ -21,14 +23,34 @@ from auth.roles import can_view_all
 from nodes.models import Node
 
 from . import bulk, services
-from .models import IN_FLIGHT, SmsBatch, SmsMessage, Status
+from .models import IN_FLIGHT, Contact, ContactGroup, SmsBatch, SmsMessage, Status
 
 MAX_CSV_BYTES = 10 * 1024 * 1024
 
 
+# Session key: contact ids picked with the "Send SMS" action on the contact list.
+PICKED_CONTACTS = "bulk_send_contact_ids"
+
+
 class BulkSendForm(forms.ModelForm):
+    # Set per request by SmsBatchAdmin.get_form: contacts are private to a user.
+    request_user = None
+
+    contacts = forms.ModelMultipleChoiceField(
+        queryset=Contact.objects.none(),
+        required=False,
+        widget=UnfoldAdminSelect2MultipleWidget,
+        help_text="Your contacts. {name} in the text becomes the contact's name.",
+    )
+    contact_groups = forms.ModelMultipleChoiceField(
+        queryset=ContactGroup.objects.none(),
+        required=False,
+        widget=UnfoldAdminCheckboxSelectMultipleWidget,
+        help_text="Everyone in these groups of yours.",
+    )
     recipients = forms.CharField(
         required=False,
+        label="Other numbers",
         widget=UnfoldAdminTextareaWidget(attrs={"rows": 6}),
         help_text=(
             "One number per line (or separated by commas). Local numbers like "
@@ -68,6 +90,13 @@ class BulkSendForm(forms.ModelForm):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self.plan = None
+        if self.request_user is not None and "contacts" in self.fields:
+            self.fields["contacts"].queryset = Contact.objects.filter(
+                owner=self.request_user
+            )
+            self.fields["contact_groups"].queryset = ContactGroup.objects.filter(
+                owner=self.request_user
+            )
         if "requested_node" in self.fields:
             self.fields["requested_node"].queryset = Node.objects.filter(
                 is_active=True
@@ -104,7 +133,14 @@ class BulkSendForm(forms.ModelForm):
         except forms.ValidationError as error:
             self.add_error("csv_file", error)
             return cleaned
-        plan = bulk.build_plan(body, cleaned.get("recipients", ""), csv_data)
+        rows = []
+        if self.request_user is not None:
+            rows = bulk.contact_rows(
+                self.request_user,
+                cleaned.get("contacts") or (),
+                cleaned.get("contact_groups") or (),
+            )
+        plan = bulk.build_plan(body, cleaned.get("recipients", ""), csv_data, rows)
         if not plan.recipients:
             self.add_error(
                 "recipients",
@@ -150,7 +186,18 @@ class SmsBatchAdmin(ModelAdmin):
 
     add_fieldsets = (
         (None, {"fields": ("name", "body")}),
-        ("Recipients", {"fields": ("recipients", "csv_file", "csv_cache")}),
+        (
+            "Recipients",
+            {
+                "fields": (
+                    "contacts",
+                    "contact_groups",
+                    "recipients",
+                    "csv_file",
+                    "csv_cache",
+                )
+            },
+        ),
         (
             "Options",
             {
@@ -189,7 +236,20 @@ class SmsBatchAdmin(ModelAdmin):
         if obj is not None:
             kwargs["form"] = forms.ModelForm
             kwargs["fields"] = []
-        return super().get_form(request, obj, **kwargs)
+        form = super().get_form(request, obj, **kwargs)
+        form.request_user = request.user  # a new class per request
+        return form
+
+    def get_changeform_initial_data(self, request):
+        """Preselect what the contact / contact group "Send SMS" actions picked."""
+        initial = super().get_changeform_initial_data(request)
+        if initial.pop("contacts", None) == "picked":
+            initial["contacts"] = request.session.get(PICKED_CONTACTS, [])
+        if "contact_groups" in initial:
+            initial["contact_groups"] = [
+                pk for pk in initial["contact_groups"].split(",") if pk.isdigit()
+            ]
+        return initial
 
     def get_readonly_fields(self, request, obj=None):
         if obj is None:

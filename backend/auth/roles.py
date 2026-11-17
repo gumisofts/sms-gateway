@@ -2,11 +2,13 @@
 
 * Gateway admin: everything about the gateway (phones, SIMs, messages, bulk
   sends, API keys) and managing users; sees all messages.
-* Operator: bulk send, cancel/retry their own messages, watch phones and SIMs
-  (read-only). Sees only messages and bulk sends they own.
+* Operator: bulk send, their own contacts, cancel/retry their own messages,
+  watch phones and SIMs (read-only). Sees only messages and bulk sends they own.
 * Viewer: read-only dashboard and lists, all messages.
 
-Superusers bypass all of this. A user's role is their group membership; the
+Contacts are private: everyone, superusers included, sees only their own.
+
+Superusers bypass all of the rest. A user's role is their group membership; the
 admin's user form sets it and turns ``is_staff`` on/off with it.
 """
 
@@ -23,6 +25,8 @@ _GATEWAY_MODELS = [
     "messaging.smsmessage",
     "messaging.smsbatch",
     "messaging.apikey",
+    "messaging.contact",
+    "messaging.contactgroup",
     "nodes.node",
     "nodes.nodesim",
     "nodes.nodetoken",
@@ -47,6 +51,11 @@ ROLE_PERMISSIONS = {
         "messaging.smsbatch.view",
         "messaging.smsbatch.add",  # bulk send
         "messaging.smsbatch.change",  # cancel a batch
+        *[
+            f"messaging.{m}.{a}"
+            for m in ("contact", "contactgroup")
+            for a in ("view", "add", "change", "delete")
+        ],
         "nodes.node.view",
         "nodes.nodesim.view",
     ],

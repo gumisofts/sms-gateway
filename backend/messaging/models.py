@@ -272,3 +272,50 @@ class ApiKey(models.Model):
             user=user, name=name, prefix=key[:12], key_hash=cls.hash_key(key)
         )
         return row, key
+
+
+class ContactGroup(models.Model):
+    """A named list of one user's contacts."""
+
+    owner = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.CASCADE,
+        related_name="contact_groups",
+    )
+    name = models.CharField(max_length=100)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ["name"]
+        constraints = [
+            models.UniqueConstraint(
+                fields=["owner", "name"], name="uniq_owner_contact_group_name"
+            )
+        ]
+
+    def __str__(self):
+        return self.name
+
+
+class Contact(models.Model):
+    """An address book entry. Private to its owner: only the owner (in the
+    admin, or through the API with their JWT / API key) can see it or send to it."""
+
+    owner = models.ForeignKey(
+        settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name="contacts"
+    )
+    name = models.CharField(max_length=120)
+    phone = models.CharField(max_length=32, help_text="Stored as E.164.")
+    groups = models.ManyToManyField(ContactGroup, blank=True, related_name="contacts")
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ["name", "id"]
+        constraints = [
+            models.UniqueConstraint(
+                fields=["owner", "phone"], name="uniq_owner_contact_phone"
+            )
+        ]
+
+    def __str__(self):
+        return f"{self.name} ({self.phone})"

@@ -11,6 +11,8 @@ def _has(perm):
 view_messages = _has("messaging.view_smsmessage")
 view_batches = _has("messaging.view_smsbatch")
 bulk_send = _has("messaging.add_smsbatch")
+view_contacts = _has("messaging.view_contact")
+view_contact_groups = _has("messaging.view_contactgroup")
 view_nodes = _has("nodes.view_node")
 view_sims = _has("nodes.view_nodesim")
 view_api_keys = _has("messaging.view_apikey")

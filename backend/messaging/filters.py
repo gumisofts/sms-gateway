@@ -15,4 +15,4 @@ class SmsMessageFilter(django_filters.FilterSet):
 
     class Meta:
         model = SmsMessage
-        fields = ["status", "node", "to", "client_reference"]
+        fields = ["status", "node", "to", "client_reference", "batch"]

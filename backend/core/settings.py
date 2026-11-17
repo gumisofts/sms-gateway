@@ -383,6 +383,18 @@ UNFOLD = {
                         "permission": "core.admin_access.view_batches",
                     },
                     {
+                        "title": "Contacts",
+                        "icon": "contacts",
+                        "link": reverse_lazy("admin:messaging_contact_changelist"),
+                        "permission": "core.admin_access.view_contacts",
+                    },
+                    {
+                        "title": "Contact groups",
+                        "icon": "groups",
+                        "link": reverse_lazy("admin:messaging_contactgroup_changelist"),
+                        "permission": "core.admin_access.view_contact_groups",
+                    },
+                    {
                         "title": "Messages",
                         "icon": "sms",
                         "link": reverse_lazy("admin:messaging_smsmessage_changelist"),

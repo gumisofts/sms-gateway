@@ -262,5 +262,5 @@ class ApiKeyAdmin(ModelAdmin):
         self.message_user(request, f"Revoked {count} key(s).", messages.SUCCESS)
 
 
-# Registers the bulk send admin.
-from . import admin_bulk  # noqa: E402,F401
+# Registers the bulk send and contacts admins.
+from . import admin_bulk, admin_contacts  # noqa: E402,F401

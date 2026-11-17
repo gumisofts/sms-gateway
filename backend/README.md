@@ -65,8 +65,16 @@ drf-spectacular (Swagger UI at `/`).
   batch with progress, a link to its messages and a "cancel waiting" action; its messages
   stay valid for the batch's `valid_hours` (default 24) instead of the global pending TTL.
   At most `DJANGO_BULK_SEND_MAX_RECIPIENTS` (50000) per batch.
+* **Contacts**: *Contacts* and *Contact groups* in the admin are an address book per user.
+  They are private: every user, superusers included, sees only their own, and only the
+  owner can send to them. Select contacts (or groups) and run *Send SMS to selected* to open
+  *Bulk send* with them picked; the bulk send form also has *Contacts* and *Contact groups*
+  fields next to the pasted list and CSV. `{name}` in the text becomes the contact's name.
+  *Import contacts* on the contact list takes a CSV (phone and name columns) and/or pasted
+  lines like `Abebe, 0912345678`, optionally adds everyone to groups, skips invalid and
+  duplicate numbers and keeps contacts you already have (or renames them if you ask).
 * **Staff roles** (`auth/roles.py`, groups re-synced on every `migrate`): *Gateway admin*
-  (everything incl. users, all messages), *Operator* (bulk send, cancel/retry their own
+  (everything incl. users, all messages), *Operator* (bulk send, their own contacts, cancel/retry their own
   messages, read-only phones/SIMs, sees only their own messages and batches) and *Viewer*
   (read-only, all messages). Set a user's role on the user form or with the list actions;
   the role turns admin access (`is_staff`) on/off. Only superusers can see or edit
@@ -160,6 +168,31 @@ curl -X POST http://localhost:8000/api/messages/ \
 `client_reference` is an idempotency key (unique per user). Optional: `node`, `sim_slot`,
 `subscription_id`, `callback_url` (the backend POSTs the message's state there on every
 status change, retrying with backoff; see `messaging/tasks.py`).
+
+### Contacts
+
+`/api/contacts/` and `/api/contact-groups/` are CRUD for the caller's own address book
+(JWT or the user's API key). Another user's contact or group id is a 404, or a 400 when
+used in a request body; staff get no wider view.
+
+```bash
+curl -X POST http://localhost:8000/api/contacts/ -H "X-API-Key: sgk_..." \
+  -H "Content-Type: application/json" \
+  -d '{"name": "Abebe", "phone": "0912345678", "groups": [1]}'
+
+curl -X POST http://localhost:8000/api/contacts/send/ -H "X-API-Key: sgk_..." \
+  -H "Content-Type: application/json" \
+  -d '{"body": "Hello {name}", "contacts": [3, 4], "groups": [1]}'
+# -> {"batch": 12, "total": 9, "skipped": 0, "parts": 9}
+```
+
+`POST /api/contacts/import/` adds many at once: JSON
+`{"contacts": [{"name": "Abebe", "phone": "0912345678"}], "groups": [1], "update_existing": false}`
+or a multipart upload with a CSV in `file`. It returns counts of `created`, `updated`,
+`existing`, `duplicates` and the `invalid` numbers.
+
+`send` queues one batch (duplicates removed; optional `name`, `node`, `sim_slot`,
+`callback_url`, `valid_hours`). Follow it with `GET /api/messages/?batch=12`.
 
 ## Nodes and the WebSocket
 

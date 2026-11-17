@@ -1,0 +1,23 @@
+{% extends "admin/base_site.html" %}
+{% load i18n unfold %}
+
+{% block breadcrumbs %}{% endblock %}
+
+{% block content %}
+<form method="post" enctype="multipart/form-data" class="max-w-3xl">
+    {% csrf_token %}
+
+    {% if form.non_field_errors %}
+        {% include "unfold/helpers/messages/error.html" with errors=form.non_field_errors %}
+    {% endif %}
+
+    {% for field in form %}
+        {% include "unfold/helpers/field.html" with field=field %}
+    {% endfor %}
+
+    <div class="flex flex-row gap-2 mt-6">
+        {% component "unfold/components/button.html" with submit=1 %}Import{% endcomponent %}
+        {% component "unfold/components/button.html" with href=changelist_url variant="default" %}Cancel{% endcomponent %}
+    </div>
+</form>
+{% endblock %}
