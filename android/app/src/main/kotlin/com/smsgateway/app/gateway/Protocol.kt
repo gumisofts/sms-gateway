@@ -86,6 +86,8 @@ sealed class NodeMessage {
         val timestamp: Long,
         /** SMS parts of the message, when known (omitted before the first send attempt). */
         val parts: Int? = null,
+        /** Only on `failed`: parts the radio accepted. 0 = nothing went out, so another node may send it. */
+        val partsSent: Int? = null,
     ) : NodeMessage()
 
     @Serializable

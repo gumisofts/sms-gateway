@@ -240,14 +240,78 @@ def apply_node_status(node: Node, data: dict) -> bool:
     )
     if changed:
         message.save()
-        notify(message)
         if message.sim_id and message.status in (
             Status.SENT,
             Status.DELIVERED,
             Status.FAILED,
         ):
+            # Counts against the failing SIM even when another node takes over.
             record_sim_result(message.sim_id, message)
+        if message.status == Status.FAILED and _fail_over(message, node, data):
+            return True
+        notify(message)
     return changed
+
+
+# Node-local error codes (docs/PROTOCOL.md).
+ERR_NO_PERMISSION, ERR_STALE, ERR_SIM_UNAVAILABLE = -1, -3, -4
+
+
+def _nothing_left_the_phone(message: SmsMessage, data: dict) -> bool:
+    """True if the failed send certainly put no text on the air, so sending it
+    from another node cannot duplicate (part of) the message."""
+    code = data.get("errorCode")
+    if message.sent_at is not None or data.get("errorMessage") == "DELIVERY_FAILED":
+        return False  # the carrier had it; only delivery failed
+    if code == ERR_STALE:
+        return False  # the phone died mid-send: it may have gone out
+    if code in (ERR_NO_PERMISSION, ERR_SIM_UNAVAILABLE):
+        return True  # failed before the radio was involved
+    parts_sent = data.get("partsSent")
+    if isinstance(parts_sent, int) and not isinstance(parts_sent, bool):
+        return parts_sent == 0
+    # Older nodes do not say: a single part either went out or did not, but a
+    # failed multipart message may have been partly sent.
+    return message.parts <= 1
+
+
+def _fail_over(message: SmsMessage, node: Node, data: dict) -> bool:
+    """A node gave up on the message: hand it to another node if that is safe
+    and one is available. Returns True if it went back to pending."""
+    from . import dispatch
+
+    if message.dispatch_attempts >= settings.MESSAGE_MAX_DISPATCH_ATTEMPTS:
+        return False
+    if not _nothing_left_the_phone(message, data):
+        return False
+    failed = list(message.failed_nodes)
+    if node.node_id not in failed:
+        failed.append(node.node_id)
+    message.failed_nodes = failed
+    if not dispatch.eligible_nodes(message, allow_tried=True).exists():
+        return False  # nobody else online (or pinned to this node): stays failed
+    logger.info(
+        "message %s failed on %s (%s %s); trying another node",
+        message.id,
+        node.node_id,
+        message.error_code,
+        message.error_message,
+    )
+    message.status = Status.PENDING
+    message.node = None
+    message.sim = None
+    message.acked_at = None
+    message.failed_at = None
+    # The next node counts its own attempts from zero.
+    message.attempts = 0
+    message.error_code = None
+    message.error_message = ""
+    message.expires_at = timezone.now() + timedelta(
+        seconds=settings.MESSAGE_PENDING_TTL_SEC
+    )
+    message.save()
+    schedule_dispatch(message.id)
+    return True
 
 
 def record_sim_result(sim_id: int, message: SmsMessage) -> None:

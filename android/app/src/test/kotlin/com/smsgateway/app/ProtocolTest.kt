@@ -37,6 +37,7 @@ class ProtocolTest {
             NodeMessage.StatusUpdate("j1", "failed", 3, 4, "NO_SERVICE", 123L),
             NodeMessage.Heartbeat(80, true, 3, listOf(SimInfo(0, 5, "Carrier")), 2, 20, 99L),
             NodeMessage.StatusUpdate("j1", "sent", 1, timestamp = 5L, parts = 3),
+            NodeMessage.StatusUpdate("j1", "failed", 5, 4, "NO_SERVICE", 6L, parts = 3, partsSent = 0),
             NodeMessage.Heartbeat(80, true, null, emptyList(), 0, 20, 99L, SmsLimitInfo(true, 100000, 60000L)),
         )
         for (m in msgs) {

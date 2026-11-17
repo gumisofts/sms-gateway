@@ -3,6 +3,7 @@ package com.smsgateway.app.gateway
 import android.util.Log
 import com.smsgateway.app.data.EnqueueResult
 import com.smsgateway.app.data.MessageRepository
+import com.smsgateway.app.data.MessageStatus
 import com.smsgateway.app.data.NodeCredentials
 import com.smsgateway.app.data.SettingsStore
 import com.smsgateway.app.util.Backoff
@@ -195,7 +196,7 @@ class GatewayClient(
     private suspend fun reportStatusLoop(send: (NodeMessage) -> Boolean) {
         messages.observeUnreported().collectLatest { pending ->
             for (m in pending) {
-                val update = NodeMessage.StatusUpdate(m.id, m.status.wire, m.attempts, m.errorCode, m.errorMessage, m.updatedAt, m.partsTotal.takeIf { it > 0 })
+                val update = NodeMessage.StatusUpdate(m.id, m.status.wire, m.attempts, m.errorCode, m.errorMessage, m.updatedAt, m.partsTotal.takeIf { it > 0 }, m.partsOk.takeIf { m.status == MessageStatus.FAILED })
                 if (!send(update)) return@collectLatest // socket is closing; retried after reconnect
                 messages.markReported(m.id, m.status)
             }

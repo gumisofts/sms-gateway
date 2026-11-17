@@ -71,6 +71,11 @@ drf-spectacular (Swagger UI at `/`).
   (read-only, all messages). Set a user's role on the user form or with the list actions;
   the role turns admin access (`is_staff`) on/off. Only superusers can see or edit
   superusers and grant raw permissions.
+* **Failover**: when a phone reports `failed` and nothing left the phone (see `partsSent` in
+  `docs/PROTOCOL.md`), the message goes back to `pending` and to another eligible node; the
+  failure still counts against the first SIM. It stays `failed` if it may have been (partly)
+  sent, is pinned to that node, no other node is online, or after
+  `DJANGO_MESSAGE_MAX_DISPATCH_ATTEMPTS`. A node that failed a message never gets it again.
 * **Acks**: `accepted: false` sends the job to a different node (`invalid_job` fails it).
   Jobs not acked within `DJANGO_MESSAGE_ACK_TIMEOUT_SEC` are re-sent to the same node if it is
   still connected (ids are idempotent on the node) or moved to another node if it is offline.

@@ -58,6 +58,7 @@ class SmsMessageAdmin(ModelAdmin):
         "id",
         "parts",
         "tried_nodes",
+        "failed_nodes",
         "dispatch_attempts",
         "attempts",
         "error_code",
@@ -106,6 +107,7 @@ class SmsMessageAdmin(ModelAdmin):
                     "dispatch_attempts",
                     "attempts",
                     "tried_nodes",
+                    "failed_nodes",
                     "error_code",
                     "error_message",
                 )

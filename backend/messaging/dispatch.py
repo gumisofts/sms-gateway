@@ -30,6 +30,9 @@ def eligible_nodes(message: SmsMessage, allow_tried: bool = False):
     qs = Node.objects.filter(is_active=True, connected=True).filter(
         Q(owner__isnull=True) | Q(owner_id=message.owner_id)
     )
+    if message.failed_nodes:
+        # Even with allow_tried: the node would dedupe the id and never send.
+        qs = qs.exclude(node_id__in=message.failed_nodes)
     if message.requested_node_id:
         qs = qs.filter(pk=message.requested_node_id)
     elif message.tried_nodes and not allow_tried:

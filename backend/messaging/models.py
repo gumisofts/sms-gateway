@@ -133,6 +133,9 @@ class SmsMessage(models.Model):
     )
     # node_ids that rejected or timed out, skipped on re-dispatch.
     tried_nodes = models.JSONField(default=list, blank=True)
+    # node_ids that took the job and failed to send it. Never used again for
+    # this message: a node ignores a job id it already knows.
+    failed_nodes = models.JSONField(default=list, blank=True)
     dispatch_attempts = models.PositiveIntegerField(default=0)
     attempts = models.PositiveIntegerField(
         default=0, help_text="Send attempts reported by the node."

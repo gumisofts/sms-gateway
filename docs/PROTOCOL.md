@@ -99,6 +99,11 @@ re-dispatch elsewhere.
 `parts` (optional int) is the number of SMS parts the message was split into; omitted until the
 node has planned the send.
 
+`partsSent` (optional int, only with `failed`) is how many parts the radio accepted. The backend
+moves a failed job to another node only when nothing left the phone: `partsSent` is 0, or (nodes
+that do not send it) the message is a single part. It never does so for errorCode -3 (stale),
+`DELIVERY_FAILED`, or after `sent`. The failed node is not given that job id again.
+
 `status` is one of `queued` (re-queued for retry), `sending`, `sent` (handed to the network),
 `failed`, `delivered` (carrier delivery report). Delivery is **at-least-once**: updates are
 persisted and re-sent after a reconnect, and intermediate states may be skipped if several changes

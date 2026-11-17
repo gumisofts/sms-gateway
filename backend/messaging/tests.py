@@ -258,6 +258,125 @@ class DispatcherTests(TestCase):
             self.assertEqual(dispatch.dispatch_pending(allow_tried=True), 1)
 
 
+class FailoverTests(TestCase):
+    """A node reported `failed`: another node takes the message when safe."""
+
+    def send_and_fail(self, message, **update):
+        with self.captureOnCommitCallbacks(execute=True):
+            dispatch.dispatch_message(message.id)
+        message.refresh_from_db()
+        first = message.node
+        data = {
+            "id": str(message.id),
+            "status": "failed",
+            "attempts": 5,
+            "errorCode": 4,
+            "errorMessage": "NO_SERVICE",
+            **update,
+        }
+        with self.captureOnCommitCallbacks(execute=True):
+            services.apply_node_status(first, data)
+        message.refresh_from_db()
+        return first
+
+    def test_failed_message_moves_to_another_node(self):
+        a, b = make_node(), make_node(queue_depth=9)
+        message = make_message()
+        self.assertEqual(self.send_and_fail(message), a)
+        self.assertEqual(message.status, Status.DISPATCHED)
+        self.assertEqual(message.node, b)
+        self.assertEqual(message.failed_nodes, [a.node_id])
+        self.assertEqual(message.attempts, 0)
+        self.assertIsNone(message.failed_at)
+        self.assertIsNone(message.error_code)
+        # The second node's updates start from attempt 1 again.
+        self.assertTrue(
+            services.apply_node_status(
+                b, {"id": str(message.id), "status": "sent", "attempts": 1}
+            )
+        )
+        # Late frames from the first node are ignored.
+        self.assertFalse(
+            services.apply_node_status(
+                a, {"id": str(message.id), "status": "failed", "attempts": 5}
+            )
+        )
+
+    def test_stays_failed_without_another_node(self):
+        make_node()
+        message = make_message()
+        self.send_and_fail(message)
+        self.assertEqual(message.status, Status.FAILED)
+        self.assertEqual(message.error_code, 4)
+
+    def test_stays_failed_when_pinned_to_the_node(self):
+        a = make_node()
+        make_node(queue_depth=9)
+        message = make_message(requested_node=a)
+        self.send_and_fail(message)
+        self.assertEqual(message.status, Status.FAILED)
+
+    def test_fails_once_every_node_failed_it(self):
+        make_node()
+        make_node(queue_depth=9)
+        message = make_message()
+        self.send_and_fail(message)
+        second = message.node
+        with self.captureOnCommitCallbacks(execute=True):
+            services.apply_node_status(
+                second,
+                {"id": str(message.id), "status": "failed", "attempts": 5},
+            )
+        message.refresh_from_db()
+        self.assertEqual(message.status, Status.FAILED)
+
+    def test_failed_node_is_never_retried_by_the_sweep(self):
+        a = make_node()
+        make_message(failed_nodes=[a.node_id])
+        self.assertEqual(dispatch.dispatch_pending(allow_tried=True), 0)
+
+    def test_no_failover_if_it_may_have_been_sent(self):
+        for update in (
+            {"errorCode": -3, "errorMessage": "STALE_SENDING"},
+            {"errorCode": None, "errorMessage": "DELIVERY_FAILED"},
+            {"parts": 3, "partsSent": 1},
+            {"parts": 3},  # older node: unknown how much of it went out
+        ):
+            with self.subTest(update=update):
+                Node.objects.all().delete()
+                make_node()
+                make_node(queue_depth=9)
+                message = make_message()
+                self.send_and_fail(message, **update)
+                self.assertEqual(message.status, Status.FAILED)
+
+    def test_multipart_fails_over_when_nothing_was_sent(self):
+        for update in (
+            {"parts": 3, "partsSent": 0},
+            {"parts": 3, "errorCode": -4, "errorMessage": "SIM_UNAVAILABLE"},
+        ):
+            with self.subTest(update=update):
+                Node.objects.all().delete()
+                make_node()
+                make_node(queue_depth=9)
+                message = make_message()
+                first = self.send_and_fail(message, **update)
+                self.assertEqual(message.status, Status.DISPATCHED)
+                self.assertNotEqual(message.node, first)
+
+    def test_no_failover_after_sent(self):
+        a = make_node()
+        make_node(queue_depth=9)
+        message = make_message()
+        with self.captureOnCommitCallbacks(execute=True):
+            dispatch.dispatch_message(message.id)
+        base = {"id": str(message.id), "attempts": 1}
+        services.apply_node_status(a, {**base, "status": "sent"})
+        services.apply_node_status(a, {**base, "status": "failed", "errorCode": 1})
+        message.refresh_from_db()
+        self.assertEqual(message.status, Status.FAILED)
+
+
 class SweeperTests(TestCase):
     @override_settings(MESSAGE_ACK_TIMEOUT_SEC=60)
     def test_unacked_on_offline_node_moves_to_another_node(self):
